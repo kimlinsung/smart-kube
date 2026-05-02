@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>Smart-Kube · Web Shell</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="shell-wrap">
+    <div class="shell-bar">
+        <div>🖥 <span id="podName"></span></div>
+        <div>
+            <a href="javascript:history.back()">返回</a>
+            <span id="status" style="margin-left:12px;">连接中...</span>
+        </div>
+    </div>
+    <div id="term"></div>
+    <input id="shell-input" placeholder="在此输入命令，按回车发送（支持 ctrl+c / ctrl+d 单字符）" autocomplete="off" />
+</div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const pod = params.get('pod');
+document.getElementById('podName').textContent = pod || '(未指定)';
+const term = document.getElementById('term');
+const input = document.getElementById('shell-input');
+const status = document.getElementById('status');
+
+if (!pod) {
+    term.textContent = '缺少 pod 参数';
+} else {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const ws = new WebSocket(`${proto}://${location.host}/ws/shell/${encodeURIComponent(pod)}`);
+    ws.onopen = () => { status.textContent = '已连接'; status.style.color = '#34d399'; };
+    ws.onclose = () => { status.textContent = '已断开'; status.style.color = '#f87171'; };
+    ws.onerror = () => { status.textContent = '连接错误'; status.style.color = '#f87171'; };
+    ws.onmessage = e => {
+        // 简易处理：把 ANSI/退格直接拼接，足够大多数 shell 输出阅读
+        term.textContent += e.data;
+        term.scrollTop = term.scrollHeight;
+    };
+
+    input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            ws.send(input.value + '\n');
+            input.value = '';
+        } else if (e.ctrlKey && e.key === 'c') {
+            e.preventDefault();
+            ws.send('\x03');
+        } else if (e.ctrlKey && e.key === 'd') {
+            e.preventDefault();
+            ws.send('\x04');
+        }
+    });
+    // 让窗口加载后焦点直接到输入框
+    setTimeout(() => input.focus(), 200);
+}
+</script>
+</body>
+</html>

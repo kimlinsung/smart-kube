@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>Smart-Kube · 操作日志</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="topbar" id="topbar"></div>
+<div class="container">
+    <div class="card">
+        <h2>操作日志（管理员可见全部，普通用户仅可见自己的）
+            <button id="refresh" style="float:right;font-size:12px;padding:4px 10px;border:1px solid #d1d5db;background:#fff;border-radius:4px;">刷新</button>
+        </h2>
+        <table>
+            <thead><tr>
+                <th>时间</th><th>用户</th><th>动作</th><th>详情</th>
+            </tr></thead>
+            <tbody id="body"></tbody>
+        </table>
+    </div>
+</div>
+<script src="/js/api.js"></script>
+<script src="/js/app.js"></script>
+<script src="/js/chat.js"></script>
+<script>
+async function load() {
+    const body = document.getElementById('body');
+    body.innerHTML = '<tr><td colspan="4">加载中...</td></tr>';
+    try {
+        const r = await API.logs();
+        body.innerHTML = '';
+        r.logs.forEach(l => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td style="white-space:nowrap;">${fmtTime(l.created_at)}</td>
+                <td>${l.username||'-'}</td>
+                <td><span class="badge badge-blue">${l.action}</span></td>
+                <td style="font-size:12px;color:#374151;">${l.detail||''}</td>`;
+            body.appendChild(tr);
+        });
+        if (!r.logs.length) body.innerHTML = '<tr><td colspan="4" style="color:#6b7280">暂无日志</td></tr>';
+    } catch (e) {
+        body.innerHTML = `<tr><td colspan="4" style="color:#dc2626">${e.message}</td></tr>`;
+    }
+}
+document.getElementById('refresh').onclick = load;
+(async () => { await loadMe(); load(); })();
+</script>
+</body>
+</html>

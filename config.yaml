@@ -1,0 +1,50 @@
+# Smart-Kube 全局配置文件
+# 启动前请修改 LLM API 配置；管理员账号密码可按需修改。
+
+llm:
+  # 兼容 OpenAI 格式的 LLM 服务地址（如官方 OpenAI / 自建 vLLM / OneAPI 网关）
+  api_base: "http://10.156.186.8:8080/v1"
+  api_key: "sk-123456"
+  model: "gpt-oss:20b"
+  temperature: 0.2
+
+flask:
+  secret_key: "smart-kube-please-change-me"
+  host: "0.0.0.0"
+  port: 5001
+  debug: false
+
+admin:
+  # 系统启动时若管理员不存在会自动创建
+  username: "admin"
+  password: "admin123"
+
+kubernetes:
+  # kubeconfig 路径，留空则使用 in-cluster 配置
+  kubeconfig_path: "~/.kube/config"
+  # 系统创建的所有资源都会落到该 namespace
+  namespace: "smart-kube"
+
+ssh:
+  # NodePort 端口分配范围，用于自动分配 SSH 端口
+  port_range_start: 30000
+  port_range_end: 32000
+  # 自动注入容器的 root 默认密码
+  default_root_password: "smartkube"
+
+resources:
+  # 容器默认资源配额
+  default_cpu_request: "100m"
+  default_memory_request: "128Mi"
+  default_cpu_limit: "1"
+  default_memory_limit: "1Gi"
+
+# 架构 -> 默认基础镜像映射（可按集群可用镜像调整）
+arch_images:
+  amd64: "ubuntu:22.04"
+  x86: "ubuntu:22.04"
+  x86_64: "ubuntu:22.04"
+  arm64: "ubuntu:22.04"
+  arm: "ubuntu:22.04"
+  riscv64: "ubuntu:22.04"
+  riscv: "ubuntu:22.04"

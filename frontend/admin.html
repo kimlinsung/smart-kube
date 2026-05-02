@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>Smart-Kube · 集群管理</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="topbar" id="topbar"></div>
+<div class="container">
+
+    <div class="card">
+        <h2>集群节点
+            <button id="refreshNodes" style="float:right;font-size:12px;padding:4px 10px;border:1px solid #d1d5db;background:#fff;border-radius:4px;">刷新</button>
+        </h2>
+        <table>
+            <thead><tr>
+                <th>名称</th><th>hostname</th><th>架构</th><th>OS</th><th>Ready</th>
+                <th>IP</th><th>kubelet</th><th>操作</th>
+            </tr></thead>
+            <tbody id="nodesBody"></tbody>
+        </table>
+    </div>
+
+    <div class="card">
+        <h2>所有用户的 Pod</h2>
+        <table>
+            <thead><tr>
+                <th>名称</th><th>所属</th><th>状态</th><th>节点</th><th>架构</th><th>类型</th>
+            </tr></thead>
+            <tbody id="podsBody"></tbody>
+        </table>
+    </div>
+
+    <div class="card">
+        <h2>用户管理</h2>
+        <div style="margin-bottom:12px;font-size:13px;">
+            新建用户：
+            <input id="nu" placeholder="用户名" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;" />
+            <input id="np" placeholder="密码" type="password" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;" />
+            <select id="nr" style="padding:4px;border:1px solid #d1d5db;border-radius:4px;">
+                <option value="user">普通用户</option>
+                <option value="admin">管理员</option>
+            </select>
+            <button id="createUser" class="primary" style="padding:4px 10px;background:#2563eb;color:#fff;border:0;border-radius:4px;">创建</button>
+        </div>
+        <table>
+            <thead><tr>
+                <th>ID</th><th>用户名</th><th>角色</th><th>创建时间</th><th>操作</th>
+            </tr></thead>
+            <tbody id="usersBody"></tbody>
+        </table>
+    </div>
+
+</div>
+<script src="/js/api.js"></script>
+<script src="/js/app.js"></script>
+<script src="/js/chat.js"></script>
+<script>
+async function loadNodes() {
+    const body = document.getElementById('nodesBody');
+    body.innerHTML = '<tr><td colspan="8">加载中...</td></tr>';
+    try {
+        const r = await API.adminNodes();
+        body.innerHTML = '';
+        r.nodes.forEach(n => {
+            const tr = document.createElement('tr');
+            const ready = n.ready === 'True'
+                ? '<span class="badge badge-green">Ready</span>'
+                : `<span class="badge badge-red">${n.ready}</span>`;
+            tr.innerHTML = `
+                <td><code>${n.name}</code></td>
+                <td>${n.hostname||'-'}</td>
+                <td>${n.arch||'-'}</td>
+                <td>${n.os||'-'}</td>
+                <td>${ready}</td>
+                <td>${n.internal_ip||'-'}</td>
+                <td style="font-size:12px;">${n.kubelet_version||'-'}</td>
+                <td class="row-actions"><button class="danger" data-name="${n.name}">删除节点</button></td>`;
+            body.appendChild(tr);
+        });
+    } catch (e) {
+        body.innerHTML = `<tr><td colspan="8" style="color:#dc2626">加载失败：${e.message}</td></tr>`;
+    }
+}
+document.getElementById('nodesBody').addEventListener('click', async e => {
+    const btn = e.target.closest('button'); if (!btn) return;
+    if (!confirm('确认从集群删除节点 ' + btn.dataset.name + '？此操作不可逆。')) return;
+    try { await API.adminDeleteNode(btn.dataset.name); loadNodes(); } catch (err) { alert(err.message); }
+});
+
+async function loadAllPods() {
+    const body = document.getElementById('podsBody');
+    body.innerHTML = '<tr><td colspan="6">加载中...</td></tr>';
+    try {
+        const r = await API.adminPods();
+        body.innerHTML = '';
+        r.pods.forEach(p => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td><code>${p.name}</code></td>
+                <td>${p.owner_username||'-'}</td>
+                <td>${badgePhase(p.phase)}</td>
+                <td>${p.node||'-'}</td>
+                <td>${p.arch||'-'}</td>
+                <td><span class="badge badge-blue">${p.kind||'-'}</span></td>`;
+            body.appendChild(tr);
+        });
+        if (!r.pods.length) body.innerHTML = '<tr><td colspan="6" style="color:#6b7280">暂无 Pod</td></tr>';
+    } catch (e) {
+        body.innerHTML = `<tr><td colspan="6" style="color:#dc2626">${e.message}</td></tr>`;
+    }
+}
+
+async function loadUsers() {
+    const body = document.getElementById('usersBody');
+    body.innerHTML = '<tr><td colspan="5">加载中...</td></tr>';
+    try {
+        const r = await API.adminUsers();
+        body.innerHTML = '';
+        r.users.forEach(u => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>${u.id}</td>
+                <td>${u.username}</td>
+                <td><span class="badge ${u.role==='admin'?'badge-blue':'badge-green'}">${u.role}</span></td>
+                <td>${fmtTime(u.created_at)}</td>
+                <td class="row-actions">
+                    ${u.role==='admin' ? '' : `<button class="danger" data-id="${u.id}">删除</button>`}
+                </td>`;
+            body.appendChild(tr);
+        });
+    } catch (e) {
+        body.innerHTML = `<tr><td colspan="5" style="color:#dc2626">${e.message}</td></tr>`;
+    }
+}
+document.getElementById('usersBody').addEventListener('click', async e => {
+    const btn = e.target.closest('button'); if (!btn) return;
+    if (!confirm('删除该用户？')) return;
+    try { await API.adminDeleteUser(btn.dataset.id); loadUsers(); } catch (err) { alert(err.message); }
+});
+document.getElementById('createUser').onclick = async () => {
+    const u = document.getElementById('nu').value.trim();
+    const p = document.getElementById('np').value;
+    const r = document.getElementById('nr').value;
+    if (!u || !p) return alert('用户名/密码不能为空');
+    try {
+        await API.adminCreateUser(u, p, r);
+        document.getElementById('nu').value = '';
+        document.getElementById('np').value = '';
+        loadUsers();
+    } catch (err) { alert(err.message); }
+};
+
+document.getElementById('refreshNodes').onclick = loadNodes;
+
+(async () => {
+    const me = await loadMe();
+    if (me.role !== 'admin') { alert('需要管理员权限'); window.location.href = '/dashboard.html'; return; }
+    loadNodes(); loadAllPods(); loadUsers();
+    setInterval(loadAllPods, 15000);
+})();
+</script>
+</body>
+</html>
