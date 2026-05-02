@@ -14,9 +14,8 @@
         <label>密码</label>
         <input id="p" type="password" placeholder="admin123" />
         <button id="btnLogin">登录</button>
-        <button id="btnReg" style="margin-top:8px;background:#6b7280;">注册新用户</button>
         <div class="err" id="err"></div>
-        <div class="switch">默认管理员账号 admin / admin123 可在 config.yaml 修改</div>
+        <div class="switch">账号由管理员创建，如需开通请联系管理员</div>
     </div>
 </div>
 <script src="/js/api.js"></script>
@@ -31,16 +30,7 @@ async function doLogin() {
         window.location.href = '/dashboard.html';
     } catch (e) { err.textContent = e.message; }
 }
-async function doReg() {
-    err.textContent = '';
-    try {
-        await API.register(u.value.trim(), p.value);
-        err.style.color = '#059669';
-        err.textContent = '注册成功，已可登录';
-    } catch (e) { err.style.color = '#dc2626'; err.textContent = e.message; }
-}
 document.getElementById('btnLogin').onclick = doLogin;
-document.getElementById('btnReg').onclick = doReg;
 p.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
 // 已登录则直接跳转
 API.me().then(()=> window.location.href = '/dashboard.html').catch(()=>{});

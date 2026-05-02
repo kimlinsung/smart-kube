@@ -48,3 +48,27 @@ function badgeNodeType(nt) {
     const [cls, label] = map[nt] || ['badge-edge', nt || 'edge'];
     return `<span class="badge ${cls}">${label}</span>`;
 }
+
+// 云边端分层分组工具
+const _NT_ORDER = ['cloud', 'edge', 'device'];
+const _NT_META  = {
+    cloud:  { label: '云节点 (Cloud)',   bg: '#e0f2fe', color: '#0369a1' },
+    edge:   { label: '边缘节点 (Edge)',  bg: '#ede9fe', color: '#6d28d9' },
+    device: { label: '端设备 (Device)',  bg: '#ffedd5', color: '#c2410c' },
+};
+
+function groupByNodeType(items, key = 'node_type') {
+    const groups = {};
+    items.forEach(item => {
+        const k = item[key] || 'edge';
+        (groups[k] = groups[k] || []).push(item);
+    });
+    const ordered = _NT_ORDER.filter(k => groups[k]);
+    const rest    = Object.keys(groups).filter(k => !_NT_ORDER.includes(k));
+    return [...ordered, ...rest].map(k => ({ type: k, items: groups[k] }));
+}
+
+function ntGroupHeaderHTML(type, count, colSpan) {
+    const m = _NT_META[type] || { label: type, bg: '#f3f4f6', color: '#374151' };
+    return `<tr><td colspan="${colSpan}" style="background:${m.bg};color:${m.color};font-weight:600;font-size:12px;padding:5px 10px;border-bottom:2px solid ${m.color}30;">${m.label}（${count} 个）</td></tr>`;
+}

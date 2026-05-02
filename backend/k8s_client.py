@@ -109,6 +109,7 @@ def list_nodes() -> list[dict]:
             "hostname": labels.get("kubernetes.io/hostname", n.metadata.name),
             "node_type": labels.get("node-type", "edge"),  # cloud / edge / device，默认 edge
             "ready": cond_ready,
+            "unschedulable": bool(n.spec.unschedulable),  # kubectl cordon 后为 True
             "internal_ip": next((a.address for a in (n.status.addresses or []) if a.type == "InternalIP"), ""),
             "kubelet_version": (n.status.node_info.kubelet_version if n.status.node_info else ""),
             "capacity": dict(n.status.capacity or {}),
@@ -120,6 +121,16 @@ def list_nodes() -> list[dict]:
 
 def delete_node(name: str):
     core_v1.delete_node(name)
+
+
+def cordon_node(name: str):
+    """封锁节点（kubectl cordon）：将 spec.unschedulable 置为 true，不再接受新 Pod 调度。"""
+    core_v1.patch_node(name, {"spec": {"unschedulable": True}})
+
+
+def uncordon_node(name: str):
+    """解封节点（kubectl uncordon）：将 spec.unschedulable 清除，恢复正常调度。"""
+    core_v1.patch_node(name, {"spec": {"unschedulable": None}})
 
 
 def cluster_info() -> dict:

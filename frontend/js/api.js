@@ -61,6 +61,8 @@ const API = {
     logs() { return this.get('/api/logs'); },
 
     adminNodes() { return this.get('/api/admin/nodes'); },
+    adminCordonNode(name) { return this.request('POST', `/api/admin/nodes/${encodeURIComponent(name)}/cordon`); },
+    adminUncordonNode(name) { return this.request('POST', `/api/admin/nodes/${encodeURIComponent(name)}/uncordon`); },
     adminDeleteNode(name) { return this.del('/api/admin/nodes/' + encodeURIComponent(name)); },
     adminPods() { return this.get('/api/admin/pods'); },
     adminUsers() { return this.get('/api/admin/users'); },

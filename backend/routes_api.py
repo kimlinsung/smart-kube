@@ -49,13 +49,8 @@ def me():
 
 @bp.post("/register")
 def register():
-    """开放普通用户注册（如不希望开放可在前端隐藏入口；管理员注册需要现有管理员调用 /admin/users）。"""
-    data = request.get_json(force=True) or {}
-    user, err = auth.create_user(data.get("username", "").strip(), data.get("password", ""), role="user")
-    if err:
-        return jsonify({"error": err}), 400
-    db.log_audit(user["id"], user["username"], "register", "")
-    return jsonify({"id": user["id"], "username": user["username"], "role": user["role"]})
+    """自助注册已关闭，账号统一由管理员通过 /api/admin/users 创建。"""
+    return jsonify({"error": "自助注册已关闭，请联系管理员开通账号"}), 403
 
 
 # --------------------------------------------------------------------------------------
@@ -197,6 +192,30 @@ def logs():
 @auth.admin_required
 def admin_nodes():
     return jsonify({"nodes": k8s_client.list_nodes()})
+
+
+@bp.post("/admin/nodes/<node_name>/cordon")
+@auth.admin_required
+def admin_cordon_node(node_name):
+    u = request.current_user
+    try:
+        k8s_client.cordon_node(node_name)
+        db.log_audit(u["id"], u["username"], "cordon_node", node_name)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.post("/admin/nodes/<node_name>/uncordon")
+@auth.admin_required
+def admin_uncordon_node(node_name):
+    u = request.current_user
+    try:
+        k8s_client.uncordon_node(node_name)
+        db.log_audit(u["id"], u["username"], "uncordon_node", node_name)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @bp.delete("/admin/nodes/<node_name>")

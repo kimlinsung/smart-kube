@@ -47,9 +47,29 @@ async function loadCluster() {
     }
 }
 
+function renderPodRow(p) {
+    const sshInfo = p.ssh_port
+        ? `port:<b>${p.ssh_port}</b> user:${p.ssh_user||'root'} pwd:<code>${p.ssh_password||''}</code>`
+        : '-';
+    return `
+        <td><code>${p.name}</code></td>
+        <td>${badgePhase(p.phase)}</td>
+        <td>${badgeNodeType(p.node_type)}</td>
+        <td>${p.node||'-'}</td>
+        <td>${p.arch||'-'}</td>
+        <td style="font-size:12px;">${p.image||'-'}</td>
+        <td style="font-size:12px;">${sshInfo}</td>
+        <td><span class="badge badge-blue">${p.kind||'-'}</span></td>
+        <td class="row-actions">
+            <button class="primary" data-act="shell" data-name="${p.name}">Web Shell</button>
+            <button data-act="upload" data-name="${p.name}">上传文件</button>
+            <button class="danger" data-act="del" data-name="${p.name}">删除</button>
+        </td>`;
+}
+
 async function loadPods() {
     const body = document.getElementById('podsBody');
-    body.innerHTML = '<tr><td colspan="8">加载中...</td></tr>';
+    body.innerHTML = '<tr><td colspan="9">加载中...</td></tr>';
     try {
         const r = await API.listResources();
         if (!r.pods.length) {
@@ -57,26 +77,13 @@ async function loadPods() {
             return;
         }
         body.innerHTML = '';
-        r.pods.forEach(p => {
-            const tr = document.createElement('tr');
-            const sshInfo = p.ssh_port
-                ? `port:<b>${p.ssh_port}</b> user:${p.ssh_user||'root'} pwd:<code>${p.ssh_password||''}</code>`
-                : '-';
-            tr.innerHTML = `
-                <td><code>${p.name}</code></td>
-                <td>${badgePhase(p.phase)}</td>
-                <td>${badgeNodeType(p.node_type)}</td>
-                <td>${p.node||'-'}</td>
-                <td>${p.arch||'-'}</td>
-                <td style="font-size:12px;">${p.image||'-'}</td>
-                <td style="font-size:12px;">${sshInfo}</td>
-                <td><span class="badge badge-blue">${p.kind||'-'}</span></td>
-                <td class="row-actions">
-                    <button class="primary" data-act="shell" data-name="${p.name}">Web Shell</button>
-                    <button data-act="upload" data-name="${p.name}">上传文件</button>
-                    <button class="danger" data-act="del" data-name="${p.name}">删除</button>
-                </td>`;
-            body.appendChild(tr);
+        groupByNodeType(r.pods).forEach(({ type, items }) => {
+            body.insertAdjacentHTML('beforeend', ntGroupHeaderHTML(type, items.length, 9));
+            items.forEach(p => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = renderPodRow(p);
+                body.appendChild(tr);
+            });
         });
     } catch (e) {
         body.innerHTML = `<tr><td colspan="9" style="color:#dc2626">加载失败：${e.message}</td></tr>`;

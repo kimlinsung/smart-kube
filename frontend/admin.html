@@ -57,37 +57,60 @@
 <script src="/js/app.js"></script>
 <script src="/js/chat.js"></script>
 <script>
+function renderNodeRow(n) {
+    const readyBadge = n.ready === 'True'
+        ? '<span class="badge badge-green">Ready</span>'
+        : `<span class="badge badge-red">${n.ready}</span>`;
+    const cordonBadge = n.unschedulable ? ' <span class="badge badge-yellow">封锁</span>' : '';
+    const cordonBtn = n.unschedulable
+        ? `<button data-act="uncordon" data-name="${n.name}">解封</button>`
+        : `<button data-act="cordon" data-name="${n.name}">封锁</button>`;
+    return `
+        <td><code>${n.name}</code></td>
+        <td>${badgeNodeType(n.node_type)}</td>
+        <td>${n.hostname||'-'}</td>
+        <td>${n.arch||'-'}</td>
+        <td>${n.os||'-'}</td>
+        <td>${readyBadge}${cordonBadge}</td>
+        <td>${n.internal_ip||'-'}</td>
+        <td style="font-size:12px;">${n.kubelet_version||'-'}</td>
+        <td class="row-actions">
+            ${cordonBtn}
+            <button class="danger" data-act="del" data-name="${n.name}">删除节点</button>
+        </td>`;
+}
+
 async function loadNodes() {
     const body = document.getElementById('nodesBody');
     body.innerHTML = '<tr><td colspan="9">加载中...</td></tr>';
     try {
         const r = await API.adminNodes();
         body.innerHTML = '';
-        r.nodes.forEach(n => {
-            const tr = document.createElement('tr');
-            const ready = n.ready === 'True'
-                ? '<span class="badge badge-green">Ready</span>'
-                : `<span class="badge badge-red">${n.ready}</span>`;
-            tr.innerHTML = `
-                <td><code>${n.name}</code></td>
-                <td>${badgeNodeType(n.node_type)}</td>
-                <td>${n.hostname||'-'}</td>
-                <td>${n.arch||'-'}</td>
-                <td>${n.os||'-'}</td>
-                <td>${ready}</td>
-                <td>${n.internal_ip||'-'}</td>
-                <td style="font-size:12px;">${n.kubelet_version||'-'}</td>
-                <td class="row-actions"><button class="danger" data-name="${n.name}">删除节点</button></td>`;
-            body.appendChild(tr);
+        groupByNodeType(r.nodes).forEach(({ type, items }) => {
+            body.insertAdjacentHTML('beforeend', ntGroupHeaderHTML(type, items.length, 9));
+            items.forEach(n => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = renderNodeRow(n);
+                body.appendChild(tr);
+            });
         });
+        if (!r.nodes.length) body.innerHTML = '<tr><td colspan="9" style="color:#6b7280">暂无节点</td></tr>';
     } catch (e) {
         body.innerHTML = `<tr><td colspan="9" style="color:#dc2626">加载失败：${e.message}</td></tr>`;
     }
 }
 document.getElementById('nodesBody').addEventListener('click', async e => {
     const btn = e.target.closest('button'); if (!btn) return;
-    if (!confirm('确认从集群删除节点 ' + btn.dataset.name + '？此操作不可逆。')) return;
-    try { await API.adminDeleteNode(btn.dataset.name); loadNodes(); } catch (err) { alert(err.message); }
+    const { act, name } = btn.dataset;
+    if (act === 'del') {
+        if (!confirm(`确认从集群删除节点 ${name}？此操作不可逆。`)) return;
+        try { await API.adminDeleteNode(name); loadNodes(); } catch (err) { alert(err.message); }
+    } else if (act === 'cordon') {
+        if (!confirm(`封锁节点 ${name}？封锁后不再接受新 Pod 调度（现有 Pod 不受影响）。`)) return;
+        try { await API.adminCordonNode(name); loadNodes(); } catch (err) { alert(err.message); }
+    } else if (act === 'uncordon') {
+        try { await API.adminUncordonNode(name); loadNodes(); } catch (err) { alert(err.message); }
+    }
 });
 
 async function loadAllPods() {
@@ -96,20 +119,26 @@ async function loadAllPods() {
     try {
         const r = await API.adminPods();
         body.innerHTML = '';
-        r.pods.forEach(p => {
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-                <td><code>${p.name}</code></td>
-                <td>${p.owner_username||'-'}</td>
-                <td>${badgePhase(p.phase)}</td>
-                <td>${badgeNodeType(p.node_type)}</td>
-                <td>${p.node||'-'}</td>
-                <td>${p.arch||'-'}</td>
-                <td><span class="badge badge-blue">${p.kind||'-'}</span></td>
-                <td class="row-actions"><button class="danger" data-name="${p.name}">删除</button></td>`;
-            body.appendChild(tr);
+        if (!r.pods.length) {
+            body.innerHTML = '<tr><td colspan="8" style="color:#6b7280">暂无 Pod</td></tr>';
+            return;
+        }
+        groupByNodeType(r.pods).forEach(({ type, items }) => {
+            body.insertAdjacentHTML('beforeend', ntGroupHeaderHTML(type, items.length, 8));
+            items.forEach(p => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><code>${p.name}</code></td>
+                    <td>${p.owner_username||'-'}</td>
+                    <td>${badgePhase(p.phase)}</td>
+                    <td>${badgeNodeType(p.node_type)}</td>
+                    <td>${p.node||'-'}</td>
+                    <td>${p.arch||'-'}</td>
+                    <td><span class="badge badge-blue">${p.kind||'-'}</span></td>
+                    <td class="row-actions"><button class="danger" data-name="${p.name}">删除</button></td>`;
+                body.appendChild(tr);
+            });
         });
-        if (!r.pods.length) body.innerHTML = '<tr><td colspan="8" style="color:#6b7280">暂无 Pod</td></tr>';
     } catch (e) {
         body.innerHTML = `<tr><td colspan="8" style="color:#dc2626">${e.message}</td></tr>`;
     }
