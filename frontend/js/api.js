@@ -65,5 +65,6 @@ const API = {
     adminPods() { return this.get('/api/admin/pods'); },
     adminUsers() { return this.get('/api/admin/users'); },
     adminCreateUser(u, p, role) { return this.post('/api/admin/users', { username: u, password: p, role }); },
+    adminChangePassword(id, password) { return this.request('PUT', `/api/admin/users/${id}/password`, { password }); },
     adminDeleteUser(id) { return this.del('/api/admin/users/' + id); },
 };

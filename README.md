@@ -1,6 +1,6 @@
-# Smart-Kube — 自然语言驱动的 K8s 管理平台
+# Smart-Kube — 自然语言驱动的管理平台
 
-通过 **LangGraph + Kubernetes 原生 API** 让用户用一句话完成 Pod / SSH 容器 / Python 代码执行 / 节点管理等所有运维操作；自带 Web Shell、文件上传、操作审计；前后端一体，单机即可部署。
+通过 **LangGraph + Kubernetes 原生 API** 让用户用一句话完成 Pod / SSH 容器 / Python 代码执行 / 节点管理等所有操作；自带 Web Shell、文件上传、操作审计；前后端一体，单机即可部署。
 
 ```
 浏览器  ──HTTP/WS──▶  Flask + Flask-Sock  ──Python K8s SDK──▶  K8s control-plane

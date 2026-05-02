@@ -1,6 +1,7 @@
 """认证与权限：用户 CRUD、密码 hash、登录、session 鉴权装饰器。"""
 import time
 from functools import wraps
+from typing import Optional
 
 from flask import session, jsonify, request
 from werkzeug.security import generate_password_hash as _gph, check_password_hash
@@ -48,6 +49,21 @@ def list_users():
     with db.cursor() as cur:
         cur.execute("SELECT id, username, role, created_at FROM users ORDER BY id")
         return [dict(r) for r in cur.fetchall()]
+
+
+def change_password(user_id: int, new_password: str) -> Optional[str]:
+    """更新指定用户的密码，返回错误字符串或 None（成功）。"""
+    if not new_password or len(new_password) < 6:
+        return "密码长度不能少于 6 位"
+    with db.cursor() as cur:
+        cur.execute("SELECT id FROM users WHERE id=?", (user_id,))
+        if not cur.fetchone():
+            return "用户不存在"
+        cur.execute(
+            "UPDATE users SET password_hash=? WHERE id=?",
+            (generate_password_hash(new_password), user_id),
+        )
+    return None
 
 
 def delete_user(user_id):

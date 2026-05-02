@@ -128,7 +128,8 @@ async function loadUsers() {
                 <td><span class="badge ${u.role==='admin'?'badge-blue':'badge-green'}">${u.role}</span></td>
                 <td>${fmtTime(u.created_at)}</td>
                 <td class="row-actions">
-                    ${u.role==='admin' ? '' : `<button class="danger" data-id="${u.id}">删除</button>`}
+                    <button data-act="pwd" data-id="${u.id}" data-name="${u.username}">重置密码</button>
+                    ${u.role==='admin' ? '' : `<button class="danger" data-act="del" data-id="${u.id}">删除</button>`}
                 </td>`;
             body.appendChild(tr);
         });
@@ -138,8 +139,16 @@ async function loadUsers() {
 }
 document.getElementById('usersBody').addEventListener('click', async e => {
     const btn = e.target.closest('button'); if (!btn) return;
-    if (!confirm('删除该用户？')) return;
-    try { await API.adminDeleteUser(btn.dataset.id); loadUsers(); } catch (err) { alert(err.message); }
+    const { act, id, name } = btn.dataset;
+    if (act === 'del') {
+        if (!confirm(`删除用户 ${name || id}？`)) return;
+        try { await API.adminDeleteUser(id); loadUsers(); } catch (err) { alert(err.message); }
+    } else if (act === 'pwd') {
+        const newPwd = prompt(`为用户 "${name}" 设置新密码（至少 6 位）：`);
+        if (newPwd === null) return;  // 点了取消
+        if (newPwd.length < 6) { alert('密码长度不能少于 6 位'); return; }
+        try { await API.adminChangePassword(id, newPwd); alert('密码已修改'); } catch (err) { alert(err.message); }
+    }
 });
 document.getElementById('createUser').onclick = async () => {
     const u = document.getElementById('nu').value.trim();

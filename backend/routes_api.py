@@ -239,6 +239,19 @@ def admin_create_user():
     return jsonify({"id": user["id"], "username": user["username"], "role": user["role"]})
 
 
+@bp.put("/admin/users/<int:uid>/password")
+@auth.admin_required
+def admin_change_password(uid):
+    u = request.current_user
+    data = request.get_json(force=True) or {}
+    new_pwd = data.get("password", "").strip()
+    err = auth.change_password(uid, new_pwd)
+    if err:
+        return jsonify({"error": err}), 400
+    db.log_audit(u["id"], u["username"], "change_password", f"uid={uid}")
+    return jsonify({"ok": True})
+
+
 @bp.delete("/admin/users/<int:uid>")
 @auth.admin_required
 def admin_delete_user(uid):
