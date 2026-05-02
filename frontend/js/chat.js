@@ -32,7 +32,7 @@ function injectChat() {
     const fileEl = panel.querySelector('#chatFile');
     const hintEl = panel.querySelector('#uploadHint');
 
-    const open = () => panel.classList.add('open');
+    const open = () => { panel.classList.add('open'); msgsEl.scrollTop = msgsEl.scrollHeight; };
     const close = () => panel.classList.remove('open');
     fab.onclick = () => panel.classList.toggle('open');
     panel.querySelector('#chatClose').onclick = close;
@@ -67,16 +67,62 @@ function injectChat() {
     async function send() {
         const t = textEl.value.trim();
         if (!t) return;
-        append('user', t); textEl.value = '';
-        append('assistant', '思考中...');
-        const lastBubble = msgsEl.lastChild.querySelector('.chat-bubble');
+        textEl.value = '';
+        append('user', t);
+
+        // 创建助手气泡（占位）
+        const div = document.createElement('div');
+        div.className = 'chat-msg assistant';
+        const bubble = document.createElement('div');
+        bubble.className = 'chat-bubble';
+        bubble.textContent = '思考中...';
+        div.appendChild(bubble);
+        msgsEl.appendChild(div);
+        msgsEl.scrollTop = msgsEl.scrollHeight;
+
+        let started = false;
         try {
-            const r = await API.chat(t);
-            lastBubble.textContent = r.reply;
-            // 操作后通知 dashboard 刷新资源
+            const resp = await fetch('/api/chat/stream', {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: t }),
+            });
+            if (resp.status === 401) { window.location.href = '/login.html'; return; }
+            if (!resp.ok) {
+                const d = await resp.json().catch(() => ({}));
+                bubble.textContent = '错误：' + (d.error || 'HTTP ' + resp.status);
+                return;
+            }
+
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder();
+            let buf = '';
+            outer: while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buf += decoder.decode(value, { stream: true });
+                let idx;
+                while ((idx = buf.indexOf('\n\n')) !== -1) {
+                    const raw = buf.slice(0, idx);
+                    buf = buf.slice(idx + 2);
+                    if (!raw.startsWith('data: ')) continue;
+                    const payload = raw.slice(6);
+                    if (payload === '[DONE]') break outer;
+                    let parsed;
+                    try { parsed = JSON.parse(payload); } catch { continue; }
+                    if (parsed.error) { bubble.textContent = '错误：' + parsed.error; break outer; }
+                    if (parsed.delta) {
+                        if (!started) { bubble.textContent = ''; started = true; }
+                        bubble.textContent += parsed.delta;
+                        msgsEl.scrollTop = msgsEl.scrollHeight;
+                    }
+                }
+            }
+            if (!started) bubble.textContent = '（无回复）';
             window.dispatchEvent(new CustomEvent('chat:done'));
         } catch (e) {
-            lastBubble.textContent = '错误：' + e.message;
+            bubble.textContent = '错误：' + e.message;
         }
     }
     panel.querySelector('#chatSend').onclick = send;

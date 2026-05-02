@@ -5,7 +5,9 @@ import os
 import time
 import uuid
 
-from flask import Blueprint, jsonify, request, session
+import json
+
+from flask import Blueprint, Response, jsonify, request, session, stream_with_context
 from werkzeug.utils import secure_filename
 
 from . import agent, auth, db, k8s_client
@@ -100,6 +102,32 @@ def chat():
         return jsonify({"error": "消息为空"}), 400
     reply = agent.chat(u, text, uploaded_file=uploaded)
     return jsonify({"reply": reply})
+
+
+@bp.post("/chat/stream")
+@auth.login_required
+def chat_stream():
+    u = request.current_user
+    data = request.get_json(force=True) or {}
+    text = (data.get("message") or "").strip()
+    if not text:
+        return jsonify({"error": "消息为空"}), 400
+    uploaded = session.get("uploaded_file")
+
+    def generate():
+        try:
+            for token in agent.chat_stream(u, text, uploaded_file=uploaded):
+                yield f"data: {json.dumps({'delta': token}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
+        finally:
+            yield "data: [DONE]\n\n"
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @bp.get("/chat/history")

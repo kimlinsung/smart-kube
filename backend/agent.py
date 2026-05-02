@@ -15,6 +15,7 @@ from typing import Annotated, List, TypedDict
 
 from langchain_core.messages import (
     AIMessage,
+    AIMessageChunk,
     BaseMessage,
     HumanMessage,
     SystemMessage,
@@ -177,3 +178,42 @@ def _fallback_chat(user: dict, text: str, uploaded_file: str | None) -> str:
             "arch": parsed.get("arch"),
         })
     return "未识别的指令"
+
+
+def chat_stream(user: dict, user_text: str, uploaded_file: str | None = None):
+    """流式对话：逐 token yield 文本片段，结束后将完整回复存入数据库。"""
+    tools_mod.set_user(user, uploaded_file=uploaded_file)
+    db.add_chat(user["id"], "user", user_text)
+
+    history = db.get_chat(user["id"], limit=20)
+    msgs = _history_to_messages(history[:-1])
+    msgs.append(HumanMessage(content=user_text))
+
+    api_key = LLM_CONF.get("api_key", "")
+    if not api_key or api_key.startswith("sk-REPLACE"):
+        reply = _fallback_chat(user, user_text, uploaded_file)
+        db.add_chat(user["id"], "assistant", reply)
+        yield reply
+        return
+
+    full_reply: list[str] = []
+    try:
+        graph = _build_graph(user)
+        for chunk, _ in graph.stream({"messages": msgs}, stream_mode="messages"):
+            if not isinstance(chunk, AIMessageChunk):
+                continue
+            # 跳过工具调用阶段生成的 chunk（不是面向用户的文本）
+            if getattr(chunk, "tool_call_chunks", None):
+                continue
+            content = chunk.content
+            if isinstance(content, str) and content:
+                full_reply.append(content)
+                yield content
+    except Exception as e:
+        log.exception("Agent 流式调用失败")
+        err = f"⚠️ 调用失败：{e}"
+        full_reply.append(err)
+        yield err
+
+    if full_reply:
+        db.add_chat(user["id"], "assistant", "".join(full_reply))
