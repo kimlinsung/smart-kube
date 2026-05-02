@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
-<title>Smart-Kube · 集群管理</title>
+<title>智能云边端调度系统 · 集群管理</title>
 <link rel="stylesheet" href="/css/style.css" />
 </head>
 <body>
@@ -15,7 +15,7 @@
         </h2>
         <table>
             <thead><tr>
-                <th>名称</th><th>hostname</th><th>架构</th><th>OS</th><th>Ready</th>
+                <th>名称</th><th>节点类型</th><th>hostname</th><th>架构</th><th>OS</th><th>Ready</th>
                 <th>IP</th><th>kubelet</th><th>操作</th>
             </tr></thead>
             <tbody id="nodesBody"></tbody>
@@ -26,7 +26,7 @@
         <h2>所有用户的 Pod</h2>
         <table>
             <thead><tr>
-                <th>名称</th><th>所属</th><th>状态</th><th>节点</th><th>架构</th><th>类型</th>
+                <th>名称</th><th>所属</th><th>状态</th><th>节点类型</th><th>节点</th><th>架构</th><th>类型</th>
             </tr></thead>
             <tbody id="podsBody"></tbody>
         </table>
@@ -59,7 +59,7 @@
 <script>
 async function loadNodes() {
     const body = document.getElementById('nodesBody');
-    body.innerHTML = '<tr><td colspan="8">加载中...</td></tr>';
+    body.innerHTML = '<tr><td colspan="9">加载中...</td></tr>';
     try {
         const r = await API.adminNodes();
         body.innerHTML = '';
@@ -70,6 +70,7 @@ async function loadNodes() {
                 : `<span class="badge badge-red">${n.ready}</span>`;
             tr.innerHTML = `
                 <td><code>${n.name}</code></td>
+                <td>${badgeNodeType(n.node_type)}</td>
                 <td>${n.hostname||'-'}</td>
                 <td>${n.arch||'-'}</td>
                 <td>${n.os||'-'}</td>
@@ -80,7 +81,7 @@ async function loadNodes() {
             body.appendChild(tr);
         });
     } catch (e) {
-        body.innerHTML = `<tr><td colspan="8" style="color:#dc2626">加载失败：${e.message}</td></tr>`;
+        body.innerHTML = `<tr><td colspan="9" style="color:#dc2626">加载失败：${e.message}</td></tr>`;
     }
 }
 document.getElementById('nodesBody').addEventListener('click', async e => {
@@ -101,12 +102,13 @@ async function loadAllPods() {
                 <td><code>${p.name}</code></td>
                 <td>${p.owner_username||'-'}</td>
                 <td>${badgePhase(p.phase)}</td>
+                <td>${badgeNodeType(p.node_type)}</td>
                 <td>${p.node||'-'}</td>
                 <td>${p.arch||'-'}</td>
                 <td><span class="badge badge-blue">${p.kind||'-'}</span></td>`;
             body.appendChild(tr);
         });
-        if (!r.pods.length) body.innerHTML = '<tr><td colspan="6" style="color:#6b7280">暂无 Pod</td></tr>';
+        if (!r.pods.length) body.innerHTML = '<tr><td colspan="7" style="color:#6b7280">暂无 Pod</td></tr>';
     } catch (e) {
         body.innerHTML = `<tr><td colspan="6" style="color:#dc2626">${e.message}</td></tr>`;
     }

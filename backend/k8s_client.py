@@ -107,6 +107,7 @@ def list_nodes() -> list[dict]:
             "arch": labels.get("kubernetes.io/arch", "unknown"),
             "os": labels.get("kubernetes.io/os", "unknown"),
             "hostname": labels.get("kubernetes.io/hostname", n.metadata.name),
+            "node_type": labels.get("node-type", "edge"),  # cloud / edge / device，默认 edge
             "ready": cond_ready,
             "internal_ip": next((a.address for a in (n.status.addresses or []) if a.type == "InternalIP"), ""),
             "kubelet_version": (n.status.node_info.kubelet_version if n.status.node_info else ""),
@@ -136,10 +137,15 @@ def cluster_info() -> dict:
     }
 
 
-def find_node_by_arch_or_hostname(arch: Optional[str] = None, hostname: Optional[str] = None) -> Optional[dict]:
-    """根据架构/主机名挑选一个 Ready 节点。hostname 优先级最高。
-    arch 会规范化（riscv→riscv64 等）后与 kubernetes.io/arch 标签匹配。
-    若指定了 arch 但无匹配节点，返回 None（不再兜底到随机节点）。
+def find_node_by_arch_or_hostname(
+    arch: Optional[str] = None,
+    hostname: Optional[str] = None,
+    node_type: Optional[str] = None,
+) -> Optional[dict]:
+    """根据条件筛选一个 Ready 节点。
+    hostname 精确匹配优先级最高；arch 规范化后匹配 kubernetes.io/arch；
+    node_type 匹配 node-type 标签（cloud/edge/device）。
+    任何条件若指定但无匹配节点，则返回 None（不静默兜底）。
     """
     nodes = list_nodes()
     if hostname:
@@ -147,15 +153,18 @@ def find_node_by_arch_or_hostname(arch: Optional[str] = None, hostname: Optional
             if n["hostname"] == hostname or n["name"] == hostname:
                 return n
         return None
+
+    candidates = [n for n in nodes if n["ready"] == "True"]
     if arch:
         arch_norm = _normalize_arch(arch)
-        for n in nodes:
-            if _normalize_arch(n["arch"]) == arch_norm and n["ready"] == "True":
-                return n
-        return None  # 指定了架构但找不到匹配节点，不静默兜底
-    for n in nodes:
-        if n["ready"] == "True":
-            return n
+        candidates = [n for n in candidates if _normalize_arch(n["arch"]) == arch_norm]
+    if node_type:
+        candidates = [n for n in candidates if n.get("node_type", "edge") == node_type]
+
+    if candidates:
+        return candidates[0]
+    if arch or node_type:
+        return None  # 有条件但无匹配，不静默兜底
     return None
 
 
@@ -201,14 +210,26 @@ def _release_ssh_port(pod_name: str):
         cur.execute("DELETE FROM ssh_ports WHERE pod_name=?", (pod_name,))
 
 
-def _build_pod_spec(containers, restart_policy, hostname, arch_canonical, node, **kwargs) -> client.V1PodSpec:
-    """构建 PodSpec，根据调度策略选择 node_name（hostname 固定） or nodeSelector（arch 标签）or 无约束。"""
+def _build_pod_spec(
+    containers, restart_policy, hostname, arch_canonical, node,
+    node_type: Optional[str] = None, **kwargs
+) -> client.V1PodSpec:
+    """构建 PodSpec。
+    hostname → node_name 固定调度；
+    arch/node_type → nodeSelector 标签调度（可同时指定）；
+    均未指定 → 无约束，调度器自由分配。
+    """
     spec = client.V1PodSpec(containers=containers, restart_policy=restart_policy, **kwargs)
     if hostname:
         spec.node_name = node["name"]
-    elif arch_canonical:
-        spec.node_selector = {"kubernetes.io/arch": arch_canonical}
-    # 否则：无约束，由调度器自由分配（image-only 场景）
+    else:
+        selector = {}
+        if arch_canonical:
+            selector["kubernetes.io/arch"] = arch_canonical
+        if node_type:
+            selector["node-type"] = node_type
+        if selector:
+            spec.node_selector = selector
     return spec
 
 
@@ -220,21 +241,22 @@ def create_ssh_pod(
     cpu: Optional[str] = None,
     memory: Optional[str] = None,
     name_prefix: str = "ssh",
+    node_type: Optional[str] = None,
 ) -> dict:
     """创建一个安装并启动 SSHD 的 Pod，并通过 NodePort Service 暴露 22 端口。
 
-    返回：包含 pod_name、node、ssh_host、ssh_port、ssh_user、ssh_password 的 dict。
+    返回：包含 pod_name、node、node_type、ssh_host、ssh_port、ssh_user、ssh_password 的 dict。
     """
     ensure_namespace()
     arch_canonical = _normalize_arch(arch) if arch else None
-    node = find_node_by_arch_or_hostname(arch=arch_canonical, hostname=hostname)
+    node = find_node_by_arch_or_hostname(arch=arch_canonical, hostname=hostname, node_type=node_type)
     if not node:
-        if hostname:
-            raise RuntimeError(f"未找到主机名为 {hostname!r} 的就绪节点")
-        elif arch_canonical:
-            raise RuntimeError(f"未找到 kubernetes.io/arch={arch_canonical} 的就绪节点")
-        else:
-            raise RuntimeError("集群中暂无就绪节点")
+        parts = []
+        if hostname:   parts.append(f"hostname={hostname}")
+        if arch_canonical: parts.append(f"arch={arch_canonical}")
+        if node_type:  parts.append(f"node-type={node_type}")
+        cond = "，".join(parts) if parts else "（集群无就绪节点）"
+        raise RuntimeError(f"未找到符合条件的就绪节点：{cond}")
 
     image_resolved = _resolve_image(arch_canonical or node["arch"], image)
     owner_label = str(user["id"])
@@ -288,7 +310,8 @@ def create_ssh_pod(
             },
             annotations={
                 "smartkube/owner-username": user["username"],
-                "smartkube/arch": arch or node["arch"] or "",
+                "smartkube/arch": arch_canonical or node["arch"] or "",
+                "smartkube/node-type": node.get("node_type", "edge"),
                 "smartkube/image": image_resolved,
                 "smartkube/ssh-port": str(nodeport),
                 "smartkube/ssh-user": "root",
@@ -301,6 +324,7 @@ def create_ssh_pod(
             hostname=hostname,
             arch_canonical=arch_canonical,
             node=node,
+            node_type=node_type,
         ),
     )
 
@@ -337,6 +361,7 @@ def create_ssh_pod(
         "pod_name": pod_name,
         "node": node["name"],
         "arch": arch_canonical or node["arch"],
+        "node_type": node.get("node_type", "edge"),
         "image": image_resolved,
         "ssh_host": node["internal_ip"] or node["hostname"] or node["name"],
         "ssh_port": nodeport,
@@ -349,17 +374,31 @@ def create_ssh_pod(
 def list_user_pods(user: dict, all_users: bool = False) -> list[dict]:
     sel = "" if all_users else f"{_LABEL_OWNER}={user['id']}"
     pods = core_v1.list_namespaced_pod(NAMESPACE, label_selector=sel).items
+
+    # 构建节点名 → node-type 的快速查找表
+    node_type_map: dict[str, str] = {}
+    try:
+        for n in core_v1.list_node().items:
+            labels = n.metadata.labels or {}
+            node_type_map[n.metadata.name] = labels.get("node-type", "edge")
+    except Exception:
+        pass
+
     out = []
     for p in pods:
         ann = p.metadata.annotations or {}
+        node_name = p.spec.node_name or ""
+        # 优先使用创建时写入的注解，回退到实时节点标签
+        node_type = ann.get("smartkube/node-type") or node_type_map.get(node_name, "edge")
         out.append({
             "name": p.metadata.name,
             "namespace": p.metadata.namespace,
             "owner_id": (p.metadata.labels or {}).get(_LABEL_OWNER),
             "owner_username": ann.get("smartkube/owner-username"),
             "kind": (p.metadata.labels or {}).get(_LABEL_KIND, "generic"),
-            "node": p.spec.node_name,
+            "node": node_name,
             "arch": ann.get("smartkube/arch", ""),
+            "node_type": node_type,
             "image": ann.get("smartkube/image", ""),
             "phase": p.status.phase,
             "created_at": p.metadata.creation_timestamp.isoformat() if p.metadata.creation_timestamp else "",
@@ -499,11 +538,12 @@ def run_python_oneshot(
     arch: Optional[str] = None,
     image: str = "python:3.11-slim",
     timeout: int = 120,
+    node_type: Optional[str] = None,
 ) -> dict:
     """拉起一个临时 python Pod，挂入代码并执行，运行完毕后销毁。返回输出。"""
     ensure_namespace()
     arch_canonical = _normalize_arch(arch) if arch else None
-    node = find_node_by_arch_or_hostname(arch=arch_canonical, hostname=hostname)
+    node = find_node_by_arch_or_hostname(arch=arch_canonical, hostname=hostname, node_type=node_type)
     if not node:
         raise RuntimeError("未找到可用节点用于 Python 执行")
     name = _make_pod_name("pyexec", user["username"])
@@ -531,6 +571,7 @@ def run_python_oneshot(
             annotations={
                 "smartkube/owner-username": user["username"],
                 "smartkube/arch": arch_canonical or node["arch"] or "",
+                "smartkube/node-type": node.get("node_type", "edge"),
                 "smartkube/image": image,
             },
         ),
@@ -540,6 +581,7 @@ def run_python_oneshot(
             hostname=hostname,
             arch_canonical=arch_canonical,
             node=node,
+            node_type=node_type,
         ),
     )
     core_v1.create_namespaced_pod(NAMESPACE, pod)

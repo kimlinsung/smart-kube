@@ -46,6 +46,10 @@ table th { background: #f9fafb; font-weight: 600; color: #374151; }
 .badge-red { background: #fee2e2; color: #991b1b; }
 .badge-yellow { background: #fef9c3; color: #854d0e; }
 .badge-blue { background: #dbeafe; color: #1e40af; }
+/* 云边端节点类型 */
+.badge-cloud  { background: #e0f2fe; color: #0369a1; }
+.badge-edge   { background: #ede9fe; color: #6d28d9; }
+.badge-device { background: #ffedd5; color: #c2410c; }
 
 /* ---- 登录 ---- */
 .login-wrap {

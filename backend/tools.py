@@ -50,7 +50,7 @@ def _audit(action: str, detail):
 
 @tool
 def list_my_resources() -> str:
-    """查看当前用户名下所有的 Pod / 容器资源（名称、节点、架构、状态、SSH 信息）。"""
+    """查看当前用户名下所有的 Pod / 容器资源（名称、节点、节点类型、架构、状态、SSH 信息）。"""
     pods = k8s_client.list_user_pods(_user())
     if not pods:
         return "你当前没有任何资源。"
@@ -59,7 +59,10 @@ def list_my_resources() -> str:
         ssh = ""
         if p.get("ssh_port"):
             ssh = f" | SSH: ssh -p {p['ssh_port']} {p.get('ssh_user','root')}@<节点IP> 密码:{p.get('ssh_password','')}"
-        lines.append(f"- {p['name']} | 状态:{p['phase']} | 节点:{p['node']} | 架构:{p['arch']} | 镜像:{p['image']}{ssh}")
+        nt = p.get("node_type", "edge")
+        lines.append(
+            f"- {p['name']} | 状态:{p['phase']} | 节点:{p['node']}[{nt}] | 架构:{p['arch']} | 镜像:{p['image']}{ssh}"
+        )
     return "你名下的资源：\n" + "\n".join(lines)
 
 
@@ -71,28 +74,31 @@ def create_ssh_container(
     cpu: Optional[str] = None,
     memory: Optional[str] = None,
     count: int = 1,
+    node_type: Optional[str] = None,
 ) -> str:
-    """创建支持 SSH 登录的 Linux 容器。
-    所有参数均可选：
-    - 只提供 image（如 ubuntu:20.04 / docker.io/library/ubuntu:20.04）→ 在任意可用节点上创建
-    - 提供 arch（amd64/arm64/riscv64/riscv/arm 等）→ 通过 kubernetes.io/arch 标签调度到匹配节点
-    - 提供 hostname → 固定调度到该节点
-    - 不填任何参数 → 在任意节点用默认镜像创建
+    """创建支持 SSH 登录的 Linux 容器。所有参数均可选，可自由组合：
+    - image（如 ubuntu:20.04 / docker.io/library/ubuntu:20.04）：指定容器镜像
+    - arch（amd64/arm64/riscv64/riscv/arm 等）：通过 kubernetes.io/arch 标签调度到匹配架构的节点
+    - node_type（cloud/edge/device）：通过 node-type 标签调度到云/边缘/端设备节点
+    - hostname：固定调度到指定节点（主机名），优先级最高
+    - arch 与 node_type 可同时指定，取交集（如 riscv64 架构的云节点）
+    - 不填任何参数 → 在任意可用节点上用默认镜像创建
     可一次创建多个（count 默认 1，上限 10）。
-    返回所有创建出的容器及其 SSH 连接方式。
     """
     count = max(1, min(int(count or 1), 10))
     out = []
     for _ in range(count):
         info = k8s_client.create_ssh_pod(
-            _user(), arch=arch, hostname=hostname, image=image, cpu=cpu, memory=memory,
+            _user(), arch=arch, hostname=hostname, image=image,
+            cpu=cpu, memory=memory, node_type=node_type,
         )
         _audit("create_ssh_pod", info)
         out.append(info)
     msg = ["✅ 已创建 {} 个 SSH 容器：".format(len(out))]
     for o in out:
+        nt = o.get("node_type", "edge")
         msg.append(
-            f"- {o['pod_name']} 节点:{o['node']} 架构:{o['arch']} 镜像:{o['image']}\n"
+            f"- {o['pod_name']} 节点:{o['node']}[{nt}] 架构:{o['arch']} 镜像:{o['image']}\n"
             f"  连接:{o['ssh_command']}  密码:{o['ssh_password']}\n"
             f"  说明:容器启动会安装 sshd，首次连接可能需要等待 30-60 秒"
         )
@@ -190,15 +196,15 @@ def cluster_overview() -> str:
 
 @tool
 def admin_list_nodes() -> str:
-    """[管理员] 列出集群所有节点：名称、架构、Ready 状态、IP、版本。"""
+    """[管理员] 列出集群所有节点：名称、节点类型(cloud/edge/device)、架构、Ready 状态、IP、版本。"""
     if not _is_admin():
         return "❌ 仅管理员可调用本工具。"
     nodes = k8s_client.list_nodes()
     lines = ["集群节点列表："]
     for n in nodes:
         lines.append(
-            f"- {n['name']} | hostname:{n['hostname']} | arch:{n['arch']} | "
-            f"Ready:{n['ready']} | IP:{n['internal_ip']} | kubelet:{n['kubelet_version']}"
+            f"- {n['name']} | 类型:{n.get('node_type','edge')} | hostname:{n['hostname']} | "
+            f"arch:{n['arch']} | Ready:{n['ready']} | IP:{n['internal_ip']} | kubelet:{n['kubelet_version']}"
         )
     return "\n".join(lines)
 
@@ -273,6 +279,28 @@ IMAGE_PATTERN = re.compile(
     r")"
 )
 
+# 云边端节点类型关键词 → node-type 标签值
+_NODE_TYPE_KEYWORDS: list[tuple[list[str], str]] = [
+    (["cloud", "云节点", "云端", "云上", "云服务器"], "cloud"),
+    (["edge", "边缘节点", "边缘", "边端"], "edge"),
+    (["device", "端节点", "设备节点", "设备", "终端"], "device"),
+]
+
+
+def _detect_node_type(text: str) -> Optional[str]:
+    """从文本中识别云/边/端节点类型意图。"""
+    t = text.lower()
+    for keywords, nt in _NODE_TYPE_KEYWORDS:
+        if any(k in t for k in keywords):
+            return nt
+    if re.search(r"在云|到云|云上", t):
+        return "cloud"
+    if re.search(r"在边|到边", t):
+        return "edge"
+    if re.search(r"在端|到端|设备上", t):
+        return "device"
+    return None
+
 
 def fallback_parse(text: str) -> Optional[dict]:
     """无 LLM 时基于规则解析常见指令。"""
@@ -285,10 +313,11 @@ def fallback_parse(text: str) -> Optional[dict]:
     count = int(count_m.group(1)) if count_m else 1
     hostname = host_m.group(1) if host_m else None
     image = image_m.group(1) if image_m else None
+    node_type = _detect_node_type(t)
     if any(k in t for k in ["创建", "新建", "拉起", "启动一个", "起一个", "起一批"]) or (
         image and not any(k in t for k in ["删除", "查看", "列出"])
     ):
-        return {"action": "create_ssh", "arch": arch, "count": count, "hostname": hostname, "image": image}
+        return {"action": "create_ssh", "arch": arch, "count": count, "hostname": hostname, "image": image, "node_type": node_type}
     if any(k in t for k in ["列出", "查看", "我的资源", "查我", "我有哪些"]):
         return {"action": "list"}
     if "删除" in t or "销毁" in t or "干掉" in t:

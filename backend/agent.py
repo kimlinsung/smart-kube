@@ -32,14 +32,18 @@ log = logging.getLogger(__name__)
 
 
 SYSTEM_PROMPT = (
-    "你是 Smart-Kube 的智能运维助手，可以通过工具直接调用 Kubernetes API。"
+    "你是智能云边端调度系统的运维助手，可以通过工具直接调用 Kubernetes API。"
     "你必须用工具完成实际操作，不要凭空编造结果。"
-    "面对自然语言指令，先把需求拆分为：动作（创建/列出/删除/执行代码/查看节点等）、"
-    "架构（amd64/arm64/riscv64；riscv 等同 riscv64，arm 等同 arm64，x86/x86_64 等同 amd64）、"
-    "目标节点 hostname、镜像名称、数量等参数，再选择合适的工具调用。"
-    "创建容器时：只提供镜像名（如 ubuntu:20.04 或 docker.io/library/ubuntu:20.04）"
-    "即可在任意可用节点上创建；同时提供架构则通过 kubernetes.io/arch 标签调度到匹配节点；"
-    "同时提供 hostname 则固定调度到该节点。所有参数均有合理默认值，不需要用户补充才能执行。"
+    "面对自然语言指令，先把需求拆分为以下参数，再选择合适的工具调用：\n"
+    "- 动作：创建/列出/删除/执行代码/查看节点等\n"
+    "- 架构（arch）：amd64/arm64/riscv64 等（riscv=riscv64，arm=arm64，x86/x86_64=amd64）\n"
+    "- 节点类型（node_type）：cloud（云节点）/ edge（边缘节点）/ device（端设备）\n"
+    "  集群节点通过 node-type 标签区分：kubectl label nodes <name> node-type=cloud/edge/device\n"
+    "  未打标签的节点默认视为 edge\n"
+    "- hostname：固定调度到指定节点（主机名）\n"
+    "- image：容器镜像，如 ubuntu:20.04 或 docker.io/library/ubuntu:20.04\n"
+    "arch 与 node_type 可同时指定（取交集），hostname 优先级最高。"
+    "所有参数均有默认值，不需要用户补充也能执行。"
     "如果用户上传了 Python 代码并要求执行，请使用 run_uploaded_python 工具。"
     "管理员才可以查看/删除集群节点。所有回答使用简体中文。"
 )
@@ -157,6 +161,7 @@ def _fallback_chat(user: dict, text: str, uploaded_file: str | None) -> str:
             "hostname": parsed.get("hostname"),
             "image": parsed.get("image"),
             "count": parsed.get("count", 1),
+            "node_type": parsed.get("node_type"),
         })
     if action == "list":
         return tools_mod.list_my_resources.invoke({})

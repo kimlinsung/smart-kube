@@ -11,13 +11,13 @@ llm:
 flask:
   secret_key: "smart-kube-please-change-me"
   host: "0.0.0.0"
-  port: 5001
+  port: 6000
   debug: false
 
 admin:
   # 系统启动时若管理员不存在会自动创建
   username: "admin"
-  password: "admin123"
+  password: "qorieoj43nfq349ifdadsd2#@@@csdf341"
 
 kubernetes:
   # kubeconfig 路径，留空则使用 in-cluster 配置
