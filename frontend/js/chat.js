@@ -8,7 +8,7 @@ function injectChat() {
     panel.className = 'chat-panel';
     panel.innerHTML = `
       <div class="chat-head">
-        <span>🤖 Smart-Kube AI 助手</span>
+        <span>👌 端边云(CED) Chat</span>
         <span class="actions">
           <button id="chatClear" title="清除上下文">清空</button>
           <button id="chatClose">×</button>

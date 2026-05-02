@@ -13,7 +13,7 @@
         <div id="cluster" style="font-size:13px;color:#374151;">加载中...</div>
     </div>
     <div class="card">
-        <h2>我的 Pod / 容器
+        <h2>我的 Units / 容器
             <button id="refresh" style="float:right;font-size:12px;padding:4px 10px;border:1px solid #d1d5db;background:#fff;border-radius:4px;">刷新</button>
         </h2>
         <table>
@@ -40,7 +40,7 @@ async function loadCluster() {
     try {
         const c = await API.clusterInfo();
         document.getElementById('cluster').innerHTML =
-            `K8s 版本：<b>${c.version}</b> &nbsp; 节点总数：<b>${c.node_count}</b> &nbsp;` +
+            `集群 版本：<b>${c.version}</b> &nbsp; 节点总数：<b>${c.node_count}</b> &nbsp;` +
             ` 就绪节点：<b style="color:#059669">${c.ready_nodes}</b> &nbsp; namespace：<b>${c.namespace}</b>`;
     } catch (e) {
         document.getElementById('cluster').textContent = '加载失败：' + e.message;
@@ -110,7 +110,7 @@ document.getElementById('hiddenUpload').onchange = async e => {
     if (!f || !CURRENT_POD_FOR_UPLOAD) return;
     try {
         const r = await API.uploadToPod(f, CURRENT_POD_FOR_UPLOAD, '/tmp');
-        alert('已上传到 Pod：' + r.pod_path);
+        alert('已上传到 Units' + r.pod_path);
     } catch (err) { alert('上传失败：' + err.message); }
     e.target.value = '';
 };

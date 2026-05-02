@@ -16,14 +16,14 @@
         <table>
             <thead><tr>
                 <th>名称</th><th>节点类型</th><th>hostname</th><th>架构</th><th>OS</th><th>Ready</th>
-                <th>IP</th><th>kubelet</th><th>操作</th>
+                <th>IP</th><th>version</th><th>操作</th>
             </tr></thead>
             <tbody id="nodesBody"></tbody>
         </table>
     </div>
 
     <div class="card">
-        <h2>所有用户的 Pod</h2>
+        <h2>所有用户的 Units</h2>
         <table>
             <thead><tr>
                 <th>名称</th><th>所属</th><th>状态</th><th>节点类型</th><th>节点</th><th>架构</th><th>类型</th><th>操作</th>
@@ -106,7 +106,7 @@ document.getElementById('nodesBody').addEventListener('click', async e => {
         if (!confirm(`确认从集群删除节点 ${name}？此操作不可逆。`)) return;
         try { await API.adminDeleteNode(name); loadNodes(); } catch (err) { alert(err.message); }
     } else if (act === 'cordon') {
-        if (!confirm(`封锁节点 ${name}？封锁后不再接受新 Pod 调度（现有 Pod 不受影响）。`)) return;
+        if (!confirm(`封锁节点 ${name}？封锁后不再接受新 Units 调度（现有 Units 不受影响）。`)) return;
         try { await API.adminCordonNode(name); loadNodes(); } catch (err) { alert(err.message); }
     } else if (act === 'uncordon') {
         try { await API.adminUncordonNode(name); loadNodes(); } catch (err) { alert(err.message); }
@@ -146,7 +146,7 @@ async function loadAllPods() {
 document.getElementById('podsBody').addEventListener('click', async e => {
     const btn = e.target.closest('button'); if (!btn) return;
     const name = btn.dataset.name;
-    if (!confirm(`确认删除 Pod ${name}？`)) return;
+    if (!confirm(`确认删除 Units ${name}？`)) return;
     try { await API.deleteResource(name); loadAllPods(); } catch (err) { alert(err.message); }
 });
 
