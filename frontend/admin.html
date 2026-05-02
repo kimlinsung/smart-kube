@@ -26,7 +26,7 @@
         <h2>所有用户的 Pod</h2>
         <table>
             <thead><tr>
-                <th>名称</th><th>所属</th><th>状态</th><th>节点类型</th><th>节点</th><th>架构</th><th>类型</th>
+                <th>名称</th><th>所属</th><th>状态</th><th>节点类型</th><th>节点</th><th>架构</th><th>类型</th><th>操作</th>
             </tr></thead>
             <tbody id="podsBody"></tbody>
         </table>
@@ -92,7 +92,7 @@ document.getElementById('nodesBody').addEventListener('click', async e => {
 
 async function loadAllPods() {
     const body = document.getElementById('podsBody');
-    body.innerHTML = '<tr><td colspan="6">加载中...</td></tr>';
+    body.innerHTML = '<tr><td colspan="8">加载中...</td></tr>';
     try {
         const r = await API.adminPods();
         body.innerHTML = '';
@@ -105,14 +105,21 @@ async function loadAllPods() {
                 <td>${badgeNodeType(p.node_type)}</td>
                 <td>${p.node||'-'}</td>
                 <td>${p.arch||'-'}</td>
-                <td><span class="badge badge-blue">${p.kind||'-'}</span></td>`;
+                <td><span class="badge badge-blue">${p.kind||'-'}</span></td>
+                <td class="row-actions"><button class="danger" data-name="${p.name}">删除</button></td>`;
             body.appendChild(tr);
         });
-        if (!r.pods.length) body.innerHTML = '<tr><td colspan="7" style="color:#6b7280">暂无 Pod</td></tr>';
+        if (!r.pods.length) body.innerHTML = '<tr><td colspan="8" style="color:#6b7280">暂无 Pod</td></tr>';
     } catch (e) {
-        body.innerHTML = `<tr><td colspan="6" style="color:#dc2626">${e.message}</td></tr>`;
+        body.innerHTML = `<tr><td colspan="8" style="color:#dc2626">${e.message}</td></tr>`;
     }
 }
+document.getElementById('podsBody').addEventListener('click', async e => {
+    const btn = e.target.closest('button'); if (!btn) return;
+    const name = btn.dataset.name;
+    if (!confirm(`确认删除 Pod ${name}？`)) return;
+    try { await API.deleteResource(name); loadAllPods(); } catch (err) { alert(err.message); }
+});
 
 async function loadUsers() {
     const body = document.getElementById('usersBody');
