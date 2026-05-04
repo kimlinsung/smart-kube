@@ -36,6 +36,14 @@ def create_app() -> Flask:
     except Exception as e:
         app.logger.warning("ensure_namespace 失败（启动时可忽略，请检查 kubeconfig）：%s", e)
 
+    # 老 Pod 关联到 owner 的默认实验
+    try:
+        n = k8s_client.migrate_unlabeled_pods_to(db.ensure_default_experiment)
+        if n:
+            app.logger.info("已将 %d 个旧 Pod 关联到各自的默认实验", n)
+    except Exception as e:
+        app.logger.warning("旧 Pod 实验迁移失败（可忽略）：%s", e)
+
     # 注册 REST 路由
     app.register_blueprint(routes_api.bp)
 

@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>智能云边端调度系统 · 实验管理</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="topbar" id="topbar"></div>
+<div class="container">
+
+    <div class="card">
+        <div class="exp-toolbar">
+            <div class="left">
+                <span id="expHint">加载中...</span>
+            </div>
+            <button id="btnNew" class="primary">+ 新建实验</button>
+        </div>
+        <div id="expGrid" class="exp-grid"></div>
+        <div id="expPagination" class="exp-pagination" style="display:none;"></div>
+    </div>
+
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/app.js"></script>
+<script src="/js/chat.js"></script>
+<script>
+const PAGE_SIZE = 20;  // 4 列 × 5 行
+let ME = null;
+let ALL_EXPS = [];
+let CURRENT_EXP_ID = null;
+let PAGE = 1;
+
+function fmtCount(label, n, cls) {
+    return `<span class="badge ${cls}" title="${label}">${label}: ${n}</span>`;
+}
+
+function renderCard(exp) {
+    const isCurrent = exp.id === CURRENT_EXP_ID;
+    const isMine = ME && exp.user_id === ME.id;
+    const showOwner = ME && (ME.role === 'admin' || !isMine);
+    const ownerLine = showOwner
+        ? `<div>用户：<b>${escapeHtml(exp.owner_username || '-')}</b></div>`
+        : '';
+    return `
+      <div class="exp-card ${isCurrent ? 'current' : ''}">
+          <div class="name clickable" data-act="view" data-id="${exp.id}" title="查看实验详情">
+              ${escapeHtml(exp.name)}
+              ${isCurrent ? '<span class="current-tag">当前</span>' : ''}
+          </div>
+          <div class="meta">
+              ${ownerLine}
+              <div>创建时间：${fmtTime(exp.created_at)}</div>
+              <div>容器总数：<b>${exp.total_count}</b></div>
+          </div>
+          <div class="counts">
+              ${fmtCount('云', exp.cloud_count, 'badge-cloud')}
+              ${fmtCount('边', exp.edge_count, 'badge-edge')}
+              ${fmtCount('端', exp.device_count, 'badge-device')}
+          </div>
+          <div class="actions">
+              <button class="view" data-act="view" data-id="${exp.id}">查看</button>
+              <button class="primary" data-act="enter" data-id="${exp.id}">
+                  ${isCurrent ? '已进入' : '进入'}
+              </button>
+              <button class="danger" data-act="del" data-id="${exp.id}" data-name="${escapeHtml(exp.name)}">删除</button>
+          </div>
+      </div>`;
+}
+
+function renderPagination(total) {
+    const el = document.getElementById('expPagination');
+    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    if (totalPages <= 1) { el.style.display = 'none'; return; }
+    el.style.display = 'flex';
+    el.innerHTML = `
+        <button id="prevPage" ${PAGE <= 1 ? 'disabled' : ''}>上一页</button>
+        <span>第 ${PAGE} / ${totalPages} 页（共 ${total} 个实验）</span>
+        <button id="nextPage" ${PAGE >= totalPages ? 'disabled' : ''}>下一页</button>`;
+    document.getElementById('prevPage').onclick = () => { PAGE--; render(); };
+    document.getElementById('nextPage').onclick = () => { PAGE++; render(); };
+}
+
+function render() {
+    const grid = document.getElementById('expGrid');
+    const hint = document.getElementById('expHint');
+    if (!ALL_EXPS.length) {
+        grid.innerHTML = '<div class="exp-empty" style="grid-column: 1 / -1;">暂无实验，点击右上角「+ 新建实验」开启第一个。</div>';
+        hint.textContent = ME && ME.role === 'admin' ? '管理员视图：可以看到所有用户的实验' : '我的实验';
+        document.getElementById('expPagination').style.display = 'none';
+        return;
+    }
+    hint.textContent = (ME && ME.role === 'admin' ? '管理员视图：所有用户的实验' : '我的实验')
+        + `（共 ${ALL_EXPS.length} 个）`;
+    const totalPages = Math.max(1, Math.ceil(ALL_EXPS.length / PAGE_SIZE));
+    if (PAGE > totalPages) PAGE = totalPages;
+    const start = (PAGE - 1) * PAGE_SIZE;
+    const slice = ALL_EXPS.slice(start, start + PAGE_SIZE);
+    grid.innerHTML = slice.map(renderCard).join('');
+    renderPagination(ALL_EXPS.length);
+}
+
+async function loadExperiments() {
+    try {
+        const r = await API.listExperiments();
+        ALL_EXPS = r.experiments || [];
+        CURRENT_EXP_ID = r.current_experiment_id || null;
+        render();
+    } catch (e) {
+        document.getElementById('expGrid').innerHTML =
+            `<div class="exp-empty" style="grid-column: 1 / -1;color:#dc2626;">加载失败：${escapeHtml(e.message)}</div>`;
+    }
+}
+
+document.getElementById('expGrid').addEventListener('click', async e => {
+    const trigger = e.target.closest('[data-act]');
+    if (!trigger) return;
+    const { act, id, name } = trigger.dataset;
+    if (act === 'view') {
+        window.location.href = '/experiment_detail.html?id=' + encodeURIComponent(id);
+        return;
+    }
+    if (act === 'enter') {
+        if (Number(id) === CURRENT_EXP_ID) return;
+        try {
+            await API.enterExperiment(id);
+            // 刷新 me 以更新顶栏当前实验
+            const me = await API.me();
+            renderTopbar(me);
+            ME = me;
+            CURRENT_EXP_ID = me.current_experiment_id;
+            render();
+            window.dispatchEvent(new CustomEvent('experiment:changed'));
+        } catch (err) { alert('进入失败：' + err.message); }
+    } else if (act === 'del') {
+        if (!confirm(`确认删除实验「${name}」？\n该实验下的所有云边端容器都会被一并删除，且不可恢复。`)) return;
+        try {
+            const r = await API.deleteExperiment(id);
+            // 若当前实验被删，后端会自动切到默认实验，这里刷一下顶栏
+            const me = await API.me();
+            renderTopbar(me); ME = me; CURRENT_EXP_ID = me.current_experiment_id;
+            await loadExperiments();
+            window.dispatchEvent(new CustomEvent('experiment:changed'));
+            const n = (r.deleted_pods || []).length;
+            if (n) alert(`已删除实验，并清理了 ${n} 个容器`);
+        } catch (err) { alert('删除失败：' + err.message); }
+    }
+});
+
+document.getElementById('btnNew').onclick = async () => {
+    const name = prompt('新实验名称：', `实验-${new Date().toLocaleString('zh-CN', { hour12: false })}`);
+    if (name === null) return;
+    try {
+        await API.createExperiment(name.trim() || '未命名实验', '');
+        const me = await API.me();
+        renderTopbar(me); ME = me; CURRENT_EXP_ID = me.current_experiment_id;
+        await loadExperiments();
+        window.dispatchEvent(new CustomEvent('experiment:changed'));
+    } catch (err) { alert('创建失败：' + err.message); }
+};
+
+(async () => {
+    ME = await loadMe();
+    if (!ME) return;
+    await loadExperiments();
+})();
+</script>
+</body>
+</html>

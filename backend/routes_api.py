@@ -28,6 +28,7 @@ def login():
         return jsonify({"error": "用户名或密码错误"}), 401
     session.clear()
     session["user_id"] = user["id"]
+    session["current_experiment_id"] = db.ensure_default_experiment(user["id"])
     db.log_audit(user["id"], user["username"], "login", "")
     return jsonify({"id": user["id"], "username": user["username"], "role": user["role"]})
 
@@ -46,7 +47,47 @@ def me():
     u = auth.current_user()
     if not u:
         return jsonify({"error": "未登录"}), 401
-    return jsonify(u)
+    exp_id = _current_experiment_id(u)
+    exp = db.get_experiment(exp_id) if exp_id else None
+    return jsonify({
+        **u,
+        "current_experiment_id": exp_id,
+        "current_experiment_name": exp["name"] if exp else None,
+    })
+
+
+def _current_experiment_id(user: dict) -> int:
+    """读取 session 中的当前实验 id；缺失/失效时回退到该用户的默认实验，并写回 session。"""
+    exp_id = session.get("current_experiment_id")
+    if exp_id:
+        exp = db.get_experiment(exp_id)
+        # 普通用户不能"占用"别人的实验做当前活动实验
+        if exp and (user["role"] == "admin" or exp["user_id"] == user["id"]):
+            return exp_id
+    exp_id = db.ensure_default_experiment(user["id"])
+    session["current_experiment_id"] = exp_id
+    return exp_id
+
+
+def _summarize_experiment(exp: dict) -> dict:
+    """加上 cloud/edge/device pod 数量等汇总字段。"""
+    pods = k8s_client.list_pods_by_experiment(exp["id"])
+    counts = {"cloud": 0, "edge": 0, "device": 0}
+    for p in pods:
+        nt = p.get("node_type") or "edge"
+        counts[nt] = counts.get(nt, 0) + 1
+    return {
+        "id": exp["id"],
+        "user_id": exp["user_id"],
+        "owner_username": exp.get("owner_username"),
+        "name": exp["name"],
+        "description": exp.get("description") or "",
+        "created_at": exp["created_at"],
+        "cloud_count": counts.get("cloud", 0),
+        "edge_count": counts.get("edge", 0),
+        "device_count": counts.get("device", 0),
+        "total_count": len(pods),
+    }
 
 
 @bp.post("/register")
@@ -100,7 +141,8 @@ def chat():
     uploaded = session.get("uploaded_file")  # 最近一次上传的 .py 路径
     if not text:
         return jsonify({"error": "消息为空"}), 400
-    reply = agent.chat(u, text, uploaded_file=uploaded)
+    exp_id = _current_experiment_id(u)
+    reply = agent.chat(u, text, uploaded_file=uploaded, experiment_id=exp_id)
     return jsonify({"reply": reply})
 
 
@@ -113,10 +155,11 @@ def chat_stream():
     if not text:
         return jsonify({"error": "消息为空"}), 400
     uploaded = session.get("uploaded_file")
+    exp_id = _current_experiment_id(u)
 
     def generate():
         try:
-            for token in agent.chat_stream(u, text, uploaded_file=uploaded):
+            for token in agent.chat_stream(u, text, uploaded_file=uploaded, experiment_id=exp_id):
                 yield f"data: {json.dumps({'delta': token}, ensure_ascii=False)}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
@@ -134,14 +177,16 @@ def chat_stream():
 @auth.login_required
 def chat_history():
     u = request.current_user
-    return jsonify({"history": db.get_chat(u["id"], limit=100)})
+    exp_id = _current_experiment_id(u)
+    return jsonify({"history": db.get_chat(u["id"], limit=100, experiment_id=exp_id)})
 
 
 @bp.delete("/chat/history")
 @auth.login_required
 def clear_history():
     u = request.current_user
-    db.clear_chat(u["id"])
+    exp_id = _current_experiment_id(u)
+    db.clear_chat(u["id"], experiment_id=exp_id)
     return jsonify({"ok": True})
 
 
@@ -210,6 +255,103 @@ def logs():
     if u["role"] == "admin":
         return jsonify({"logs": db.get_audit_logs()})
     return jsonify({"logs": db.get_audit_logs(user_id=u["id"])})
+
+
+# --------------------------------------------------------------------------------------
+# 实验（一个实验 = 一个 session，按对话区分云边端 Pod 组合）
+# --------------------------------------------------------------------------------------
+
+@bp.get("/experiments")
+@auth.login_required
+def list_experiments():
+    u = request.current_user
+    exps = db.list_experiments(user_id=None if u["role"] == "admin" else u["id"])
+    items = [_summarize_experiment(e) for e in exps]
+    return jsonify({
+        "experiments": items,
+        "current_experiment_id": _current_experiment_id(u),
+    })
+
+
+@bp.post("/experiments")
+@auth.login_required
+def create_experiment():
+    u = request.current_user
+    data = request.get_json(force=True) or {}
+    name = (data.get("name") or "").strip() or f"实验-{int(time.time())}"
+    desc = (data.get("description") or "").strip()
+    exp = db.create_experiment(u["id"], name, desc)
+    session["current_experiment_id"] = exp["id"]
+    db.log_audit(u["id"], u["username"], "create_experiment", f"{exp['id']}:{name}")
+    exp["owner_username"] = u["username"]
+    return jsonify(_summarize_experiment(exp))
+
+
+@bp.get("/experiments/<int:exp_id>")
+@auth.login_required
+def get_experiment_detail(exp_id):
+    u = request.current_user
+    exp = db.get_experiment(exp_id)
+    if not exp:
+        return jsonify({"error": "实验不存在"}), 404
+    if u["role"] != "admin" and exp["user_id"] != u["id"]:
+        return jsonify({"error": "无权查看他人实验"}), 403
+    pods = k8s_client.list_pods_by_experiment(exp_id)
+    counts = {"cloud": 0, "edge": 0, "device": 0}
+    for p in pods:
+        nt = p.get("node_type") or "edge"
+        counts[nt] = counts.get(nt, 0) + 1
+    return jsonify({
+        "experiment": {
+            "id": exp["id"],
+            "user_id": exp["user_id"],
+            "owner_username": exp.get("owner_username"),
+            "name": exp["name"],
+            "description": exp.get("description") or "",
+            "created_at": exp["created_at"],
+            "cloud_count": counts.get("cloud", 0),
+            "edge_count": counts.get("edge", 0),
+            "device_count": counts.get("device", 0),
+            "total_count": len(pods),
+        },
+        "pods": pods,
+        "is_current": _current_experiment_id(u) == exp_id,
+    })
+
+
+@bp.post("/experiments/<int:exp_id>/enter")
+@auth.login_required
+def enter_experiment(exp_id):
+    u = request.current_user
+    exp = db.get_experiment(exp_id)
+    if not exp:
+        return jsonify({"error": "实验不存在"}), 404
+    if u["role"] != "admin" and exp["user_id"] != u["id"]:
+        return jsonify({"error": "无权进入他人实验"}), 403
+    session["current_experiment_id"] = exp_id
+    db.log_audit(u["id"], u["username"], "enter_experiment", str(exp_id))
+    return jsonify({"ok": True, "current_experiment_id": exp_id, "name": exp["name"]})
+
+
+@bp.delete("/experiments/<int:exp_id>")
+@auth.login_required
+def delete_experiment(exp_id):
+    u = request.current_user
+    exp = db.get_experiment(exp_id)
+    if not exp:
+        return jsonify({"error": "实验不存在"}), 404
+    if u["role"] != "admin" and exp["user_id"] != u["id"]:
+        return jsonify({"error": "无权删除他人实验"}), 403
+    try:
+        deleted_pods = k8s_client.delete_pods_by_experiment(exp_id)
+    except Exception as e:
+        return jsonify({"error": f"清理 Pod 失败：{e}"}), 500
+    db.delete_experiment(exp_id)
+    # 当前实验若被删，回退到该用户的默认实验（必要时新建）
+    if session.get("current_experiment_id") == exp_id:
+        session["current_experiment_id"] = db.ensure_default_experiment(u["id"])
+    db.log_audit(u["id"], u["username"], "delete_experiment", f"{exp_id}:pods={len(deleted_pods)}")
+    return jsonify({"ok": True, "deleted_pods": deleted_pods})
 
 
 # --------------------------------------------------------------------------------------

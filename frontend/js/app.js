@@ -14,20 +14,31 @@ function renderTopbar(me) {
     if (!el) return;
     const path = window.location.pathname;
     const isAdmin = me.role === 'admin';
+    const expName = me.current_experiment_name
+        ? `<span class="topbar-exp" title="当前实验">实验：<b>${escapeHtml(me.current_experiment_name)}</b></span>`
+        : '';
     el.innerHTML = `
       <h1>智能云边端(Cloud-Edge-Device)调度系统</h1>
       <nav>
+        <a href="/experiments.html" class="${path.endsWith('experiments.html') ? 'active' : ''}">实验管理</a>
         <a href="/dashboard.html" class="${path.endsWith('dashboard.html') ? 'active' : ''}">我的资源</a>
         <a href="/logs.html" class="${path.endsWith('logs.html') ? 'active' : ''}">操作日志</a>
         ${isAdmin ? `<a href="/admin.html" class="${path.endsWith('admin.html') ? 'active' : ''}">集群管理</a>` : ''}
       </nav>
       <div class="user">
+        ${expName}
         ${me.username} <span class="badge ${isAdmin ? 'badge-blue' : 'badge-green'}">${isAdmin ? '管理员' : '用户'}</span>
         <button id="btnLogout">退出</button>
       </div>`;
     document.getElementById('btnLogout').onclick = async () => {
         await API.logout(); window.location.href = '/login.html';
     };
+}
+
+function escapeHtml(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 function fmtTime(s) {

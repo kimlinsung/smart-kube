@@ -21,11 +21,17 @@ from .config import UPLOAD_DIR
 # 使用 ContextVar 代替 threading.local，确保在 LangGraph 线程池中也能正确继承上下文
 _user_ctx: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar("current_user", default=None)
 _file_ctx: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("uploaded_file", default=None)
+_exp_ctx: contextvars.ContextVar[Optional[int]] = contextvars.ContextVar("current_experiment", default=None)
 
 
-def set_user(user: dict, uploaded_file: Optional[str] = None):
+def set_user(user: dict, uploaded_file: Optional[str] = None, experiment_id: Optional[int] = None):
     _user_ctx.set(user)
     _file_ctx.set(uploaded_file)
+    _exp_ctx.set(experiment_id)
+
+
+def _exp() -> Optional[int]:
+    return _exp_ctx.get()
 
 
 def _user() -> dict:
@@ -91,6 +97,7 @@ def create_ssh_container(
         info = k8s_client.create_ssh_pod(
             _user(), arch=arch, hostname=hostname, image=image,
             cpu=cpu, memory=memory, node_type=node_type,
+            experiment_id=_exp(),
         )
         _audit("create_ssh_pod", info)
         out.append(info)
@@ -168,6 +175,7 @@ def run_uploaded_python(
         res = k8s_client.run_python_oneshot(
             _user(), code_path,
             hostname=hostname, arch=arch, image=image, timeout=int(timeout),
+            experiment_id=_exp(),
         )
     except Exception as e:
         return f"❌ 执行失败：{e}"

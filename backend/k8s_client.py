@@ -37,6 +37,7 @@ log = logging.getLogger(__name__)
 _LABEL_OWNER = "smartkube/owner"
 _LABEL_APP = "smartkube/app"
 _LABEL_KIND = "smartkube/kind"  # ssh / exec / generic
+_LABEL_EXPERIMENT = "smartkube/experiment-id"
 
 # 用户输入的架构名 → kubernetes.io/arch 标准值
 _ARCH_ALIASES: dict[str, str] = {
@@ -253,6 +254,7 @@ def create_ssh_pod(
     memory: Optional[str] = None,
     name_prefix: str = "ssh",
     node_type: Optional[str] = None,
+    experiment_id: Optional[int] = None,
 ) -> dict:
     """创建一个安装并启动 SSHD 的 Pod，并通过 NodePort Service 暴露 22 端口。
 
@@ -310,15 +312,18 @@ def create_ssh_pod(
         ),
     )
 
+    labels = {
+        _LABEL_OWNER: owner_label,
+        _LABEL_APP: pod_name,
+        _LABEL_KIND: "ssh",
+    }
+    if experiment_id:
+        labels[_LABEL_EXPERIMENT] = str(experiment_id)
     pod = client.V1Pod(
         metadata=client.V1ObjectMeta(
             name=pod_name,
             namespace=NAMESPACE,
-            labels={
-                _LABEL_OWNER: owner_label,
-                _LABEL_APP: pod_name,
-                _LABEL_KIND: "ssh",
-            },
+            labels=labels,
             annotations={
                 "smartkube/owner-username": user["username"],
                 "smartkube/arch": arch_canonical or node["arch"] or "",
@@ -327,6 +332,7 @@ def create_ssh_pod(
                 "smartkube/ssh-port": str(nodeport),
                 "smartkube/ssh-user": "root",
                 "smartkube/ssh-password": root_pwd,
+                "smartkube/experiment-id": str(experiment_id) if experiment_id else "",
             },
         ),
         spec=_build_pod_spec(
@@ -345,11 +351,14 @@ def create_ssh_pod(
         _release_ssh_port(pod_name)
         raise RuntimeError(f"Pod 创建失败：{e.reason}") from e
 
+    svc_labels = {_LABEL_OWNER: owner_label, _LABEL_APP: pod_name}
+    if experiment_id:
+        svc_labels[_LABEL_EXPERIMENT] = str(experiment_id)
     svc = client.V1Service(
         metadata=client.V1ObjectMeta(
             name=pod_name,
             namespace=NAMESPACE,
-            labels={_LABEL_OWNER: owner_label, _LABEL_APP: pod_name},
+            labels=svc_labels,
         ),
         spec=client.V1ServiceSpec(
             type="NodePort",
@@ -379,6 +388,7 @@ def create_ssh_pod(
         "ssh_user": "root",
         "ssh_password": root_pwd,
         "ssh_command": f"ssh -p {nodeport} root@{node['internal_ip'] or node['name']}",
+        "experiment_id": experiment_id,
     }
 
 
@@ -401,12 +411,14 @@ def list_user_pods(user: dict, all_users: bool = False) -> list[dict]:
         node_name = p.spec.node_name or ""
         # 优先使用创建时写入的注解，回退到实时节点标签
         node_type = ann.get("smartkube/node-type") or node_type_map.get(node_name, "edge")
+        labels = p.metadata.labels or {}
+        exp_label = labels.get(_LABEL_EXPERIMENT) or ann.get("smartkube/experiment-id") or ""
         out.append({
             "name": p.metadata.name,
             "namespace": p.metadata.namespace,
-            "owner_id": (p.metadata.labels or {}).get(_LABEL_OWNER),
+            "owner_id": labels.get(_LABEL_OWNER),
             "owner_username": ann.get("smartkube/owner-username"),
-            "kind": (p.metadata.labels or {}).get(_LABEL_KIND, "generic"),
+            "kind": labels.get(_LABEL_KIND, "generic"),
             "node": node_name,
             "arch": ann.get("smartkube/arch", ""),
             "node_type": node_type,
@@ -416,6 +428,7 @@ def list_user_pods(user: dict, all_users: bool = False) -> list[dict]:
             "ssh_port": ann.get("smartkube/ssh-port"),
             "ssh_user": ann.get("smartkube/ssh-user"),
             "ssh_password": ann.get("smartkube/ssh-password"),
+            "experiment_id": int(exp_label) if exp_label.isdigit() else None,
         })
     return out
 
@@ -459,6 +472,117 @@ def delete_pod(pod_name: str, user: dict):
         if e.status != 404:
             pass
     _release_ssh_port(pod_name)
+
+
+def delete_pods_by_experiment(experiment_id: int) -> list[str]:
+    """删除一个实验下的所有 Pod 和关联 Service，并释放 SSH 端口。返回被删 Pod 名列表。"""
+    sel = f"{_LABEL_EXPERIMENT}={experiment_id}"
+    deleted: list[str] = []
+    try:
+        pods = core_v1.list_namespaced_pod(NAMESPACE, label_selector=sel).items
+    except ApiException:
+        pods = []
+    for p in pods:
+        name = p.metadata.name
+        try:
+            core_v1.delete_namespaced_pod(name, NAMESPACE)
+        except ApiException as e:
+            if e.status != 404:
+                log.warning("删除 Pod %s 失败: %s", name, e)
+                continue
+        try:
+            core_v1.delete_namespaced_service(name, NAMESPACE)
+        except ApiException:
+            pass
+        _release_ssh_port(name)
+        deleted.append(name)
+    return deleted
+
+
+def list_pods_by_experiment(experiment_id: int) -> list[dict]:
+    """列出某个实验下的所有 Pod（不做权限检查，供后端汇总和详情页使用）。
+
+    返回字段与 list_user_pods 保持一致，方便前端复用渲染逻辑。
+    """
+    sel = f"{_LABEL_EXPERIMENT}={experiment_id}"
+    try:
+        pods = core_v1.list_namespaced_pod(NAMESPACE, label_selector=sel).items
+    except ApiException:
+        return []
+
+    node_type_map: dict[str, str] = {}
+    try:
+        for n in core_v1.list_node().items:
+            labels = n.metadata.labels or {}
+            node_type_map[n.metadata.name] = labels.get("node-type", "edge")
+    except Exception:
+        pass
+
+    out = []
+    for p in pods:
+        ann = p.metadata.annotations or {}
+        labels = p.metadata.labels or {}
+        node_name = p.spec.node_name or ""
+        node_type = ann.get("smartkube/node-type") or node_type_map.get(node_name, "edge")
+        out.append({
+            "name": p.metadata.name,
+            "namespace": p.metadata.namespace,
+            "owner_id": labels.get(_LABEL_OWNER),
+            "owner_username": ann.get("smartkube/owner-username"),
+            "kind": labels.get(_LABEL_KIND, "generic"),
+            "node": node_name,
+            "arch": ann.get("smartkube/arch", ""),
+            "node_type": node_type,
+            "image": ann.get("smartkube/image", ""),
+            "phase": p.status.phase,
+            "created_at": p.metadata.creation_timestamp.isoformat() if p.metadata.creation_timestamp else "",
+            "ssh_port": ann.get("smartkube/ssh-port"),
+            "ssh_user": ann.get("smartkube/ssh-user"),
+            "ssh_password": ann.get("smartkube/ssh-password"),
+            "experiment_id": experiment_id,
+        })
+    return out
+
+
+def migrate_unlabeled_pods_to(default_experiment_resolver) -> int:
+    """把所有缺 experiment-id 标签的 Pod 关联到 owner 的默认实验上。
+    default_experiment_resolver(user_id:int) -> experiment_id:int
+    返回被打标签的 Pod 数量。
+    """
+    try:
+        pods = core_v1.list_namespaced_pod(NAMESPACE).items
+    except ApiException:
+        return 0
+    patched = 0
+    for p in pods:
+        labels = p.metadata.labels or {}
+        if labels.get(_LABEL_EXPERIMENT):
+            continue
+        owner = labels.get(_LABEL_OWNER)
+        if not owner or not str(owner).isdigit():
+            continue
+        try:
+            exp_id = default_experiment_resolver(int(owner))
+        except Exception:
+            continue
+        if not exp_id:
+            continue
+        body = {
+            "metadata": {
+                "labels": {_LABEL_EXPERIMENT: str(exp_id)},
+                "annotations": {"smartkube/experiment-id": str(exp_id)},
+            }
+        }
+        try:
+            core_v1.patch_namespaced_pod(p.metadata.name, NAMESPACE, body)
+            patched += 1
+        except ApiException as e:
+            log.warning("给 Pod %s 打实验标签失败: %s", p.metadata.name, e)
+        try:
+            core_v1.patch_namespaced_service(p.metadata.name, NAMESPACE, body)
+        except ApiException:
+            pass
+    return patched
 
 
 # --------------------------------------------------------------------------------------
@@ -550,6 +674,7 @@ def run_python_oneshot(
     image: str = "python:3.11-slim",
     timeout: int = 120,
     node_type: Optional[str] = None,
+    experiment_id: Optional[int] = None,
 ) -> dict:
     """拉起一个临时 python Pod，挂入代码并执行，运行完毕后销毁。返回输出。"""
     ensure_namespace()
@@ -570,20 +695,24 @@ def run_python_oneshot(
             limits={"cpu": "1", "memory": "1Gi"},
         ),
     )
+    pyexec_labels = {
+        _LABEL_OWNER: str(user["id"]),
+        _LABEL_APP: name,
+        _LABEL_KIND: "exec",
+    }
+    if experiment_id:
+        pyexec_labels[_LABEL_EXPERIMENT] = str(experiment_id)
     pod = client.V1Pod(
         metadata=client.V1ObjectMeta(
             name=name,
             namespace=NAMESPACE,
-            labels={
-                _LABEL_OWNER: str(user["id"]),
-                _LABEL_APP: name,
-                _LABEL_KIND: "exec",
-            },
+            labels=pyexec_labels,
             annotations={
                 "smartkube/owner-username": user["username"],
                 "smartkube/arch": arch_canonical or node["arch"] or "",
                 "smartkube/node-type": node.get("node_type", "edge"),
                 "smartkube/image": image,
+                "smartkube/experiment-id": str(experiment_id) if experiment_id else "",
             },
         ),
         spec=_build_pod_spec(

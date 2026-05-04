@@ -113,12 +113,12 @@ def _history_to_messages(rows) -> list[BaseMessage]:
     return out
 
 
-def chat(user: dict, user_text: str, uploaded_file: str | None = None) -> str:
+def chat(user: dict, user_text: str, uploaded_file: str | None = None, experiment_id: int | None = None) -> str:
     """单次对话入口：把历史 + 当前消息丢进 graph，得到最终回复。"""
-    tools_mod.set_user(user, uploaded_file=uploaded_file)
-    db.add_chat(user["id"], "user", user_text)
+    tools_mod.set_user(user, uploaded_file=uploaded_file, experiment_id=experiment_id)
+    db.add_chat(user["id"], "user", user_text, experiment_id=experiment_id)
 
-    history = db.get_chat(user["id"], limit=20)
+    history = db.get_chat(user["id"], limit=20, experiment_id=experiment_id)
     msgs = _history_to_messages(history[:-1])  # 不重复包含刚刚加进去的当前消息
     msgs.append(HumanMessage(content=user_text))
 
@@ -126,7 +126,7 @@ def chat(user: dict, user_text: str, uploaded_file: str | None = None) -> str:
     if not api_key or api_key.startswith("sk-REPLACE"):
         # LLM 未配置 → 退化到规则解析
         reply = _fallback_chat(user, user_text, uploaded_file)
-        db.add_chat(user["id"], "assistant", reply)
+        db.add_chat(user["id"], "assistant", reply, experiment_id=experiment_id)
         return reply
 
     try:
@@ -138,7 +138,7 @@ def chat(user: dict, user_text: str, uploaded_file: str | None = None) -> str:
         log.exception("Agent 调用失败")
         reply = f"⚠️ Agent 调用失败：{e}\n已退化为规则解析：\n" + _fallback_chat(user, user_text, uploaded_file)
 
-    db.add_chat(user["id"], "assistant", reply)
+    db.add_chat(user["id"], "assistant", reply, experiment_id=experiment_id)
     return reply
 
 
@@ -180,19 +180,19 @@ def _fallback_chat(user: dict, text: str, uploaded_file: str | None) -> str:
     return "未识别的指令"
 
 
-def chat_stream(user: dict, user_text: str, uploaded_file: str | None = None):
+def chat_stream(user: dict, user_text: str, uploaded_file: str | None = None, experiment_id: int | None = None):
     """流式对话：逐 token yield 文本片段，结束后将完整回复存入数据库。"""
-    tools_mod.set_user(user, uploaded_file=uploaded_file)
-    db.add_chat(user["id"], "user", user_text)
+    tools_mod.set_user(user, uploaded_file=uploaded_file, experiment_id=experiment_id)
+    db.add_chat(user["id"], "user", user_text, experiment_id=experiment_id)
 
-    history = db.get_chat(user["id"], limit=20)
+    history = db.get_chat(user["id"], limit=20, experiment_id=experiment_id)
     msgs = _history_to_messages(history[:-1])
     msgs.append(HumanMessage(content=user_text))
 
     api_key = LLM_CONF.get("api_key", "")
     if not api_key or api_key.startswith("sk-REPLACE"):
         reply = _fallback_chat(user, user_text, uploaded_file)
-        db.add_chat(user["id"], "assistant", reply)
+        db.add_chat(user["id"], "assistant", reply, experiment_id=experiment_id)
         yield reply
         return
 
@@ -216,4 +216,4 @@ def chat_stream(user: dict, user_text: str, uploaded_file: str | None = None):
         yield err
 
     if full_reply:
-        db.add_chat(user["id"], "assistant", "".join(full_reply))
+        db.add_chat(user["id"], "assistant", "".join(full_reply), experiment_id=experiment_id)

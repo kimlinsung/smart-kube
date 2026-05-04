@@ -1,4 +1,6 @@
-"""SQLite 数据存储：用户、操作日志、SSH 端口分配、Agent 会话上下文。"""
+"""SQLite 数据存储：用户、操作日志、SSH 端口分配、Agent 会话上下文、实验。"""
+from __future__ import annotations
+
 import os
 import sqlite3
 import threading
@@ -71,10 +73,27 @@ def init_db():
                 user_id INTEGER NOT NULL,
                 role TEXT NOT NULL,
                 content TEXT,
-                created_at INTEGER
+                created_at INTEGER,
+                experiment_id INTEGER
             )
             """
         )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS experiments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                created_at INTEGER NOT NULL
+            )
+            """
+        )
+        # 老库升级：chat_history 缺 experiment_id 时补上
+        cur.execute("PRAGMA table_info(chat_history)")
+        cols = {r["name"] for r in cur.fetchall()}
+        if "experiment_id" not in cols:
+            cur.execute("ALTER TABLE chat_history ADD COLUMN experiment_id INTEGER")
 
 
 def log_audit(user_id, username, action, detail=""):
@@ -97,26 +116,107 @@ def get_audit_logs(user_id=None, limit=200):
         return [dict(r) for r in cur.fetchall()]
 
 
-def add_chat(user_id, role, content):
+def add_chat(user_id, role, content, experiment_id=None):
     with cursor() as cur:
         cur.execute(
-            "INSERT INTO chat_history(user_id, role, content, created_at) VALUES(?,?,?,?)",
-            (user_id, role, content, int(time.time())),
+            "INSERT INTO chat_history(user_id, role, content, created_at, experiment_id) VALUES(?,?,?,?,?)",
+            (user_id, role, content, int(time.time()), experiment_id),
         )
 
 
-def get_chat(user_id, limit=20):
-    """读取用户最近 N 条对话上下文，按时间正序返回。"""
+def get_chat(user_id, limit=20, experiment_id=None):
+    """读取用户最近 N 条对话上下文，按时间正序返回。
+    experiment_id 指定时只返回该实验下的对话；不指定则返回该用户全部历史（兼容老用法）。"""
     with cursor() as cur:
-        cur.execute(
-            "SELECT role, content FROM chat_history WHERE user_id=? ORDER BY id DESC LIMIT ?",
-            (user_id, limit),
-        )
+        if experiment_id is None:
+            cur.execute(
+                "SELECT role, content FROM chat_history WHERE user_id=? ORDER BY id DESC LIMIT ?",
+                (user_id, limit),
+            )
+        else:
+            cur.execute(
+                "SELECT role, content FROM chat_history WHERE user_id=? AND experiment_id=? ORDER BY id DESC LIMIT ?",
+                (user_id, experiment_id, limit),
+            )
         rows = [dict(r) for r in cur.fetchall()]
     rows.reverse()
     return rows
 
 
-def clear_chat(user_id):
+def clear_chat(user_id, experiment_id=None):
     with cursor() as cur:
-        cur.execute("DELETE FROM chat_history WHERE user_id=?", (user_id,))
+        if experiment_id is None:
+            cur.execute("DELETE FROM chat_history WHERE user_id=?", (user_id,))
+        else:
+            cur.execute(
+                "DELETE FROM chat_history WHERE user_id=? AND experiment_id=?",
+                (user_id, experiment_id),
+            )
+
+
+# --------------------------------------------------------------------------------------
+# 实验（一个 session = 一个 experiment）
+# --------------------------------------------------------------------------------------
+
+def create_experiment(user_id: int, name: str, description: str = "") -> dict:
+    name = (name or "").strip() or "未命名实验"
+    with cursor() as cur:
+        cur.execute(
+            "INSERT INTO experiments(user_id, name, description, created_at) VALUES(?,?,?,?)",
+            (user_id, name, description, int(time.time())),
+        )
+        new_id = cur.lastrowid
+        cur.execute("SELECT * FROM experiments WHERE id=?", (new_id,))
+        return dict(cur.fetchone())
+
+
+def get_experiment(exp_id: int) -> dict | None:
+    with cursor() as cur:
+        cur.execute(
+            "SELECT e.*, u.username AS owner_username FROM experiments e "
+            "LEFT JOIN users u ON u.id = e.user_id WHERE e.id=?",
+            (exp_id,),
+        )
+        r = cur.fetchone()
+    return dict(r) if r else None
+
+
+def list_experiments(user_id: int | None = None) -> list[dict]:
+    """user_id=None 返回所有（管理员视图），否则只返回该用户的。"""
+    with cursor() as cur:
+        if user_id is None:
+            cur.execute(
+                "SELECT e.*, u.username AS owner_username FROM experiments e "
+                "LEFT JOIN users u ON u.id = e.user_id ORDER BY e.id DESC"
+            )
+        else:
+            cur.execute(
+                "SELECT e.*, u.username AS owner_username FROM experiments e "
+                "LEFT JOIN users u ON u.id = e.user_id WHERE e.user_id=? ORDER BY e.id DESC",
+                (user_id,),
+            )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def delete_experiment(exp_id: int):
+    """仅删 experiments 行和对应 chat_history。Pod 由 k8s_client 侧清理。"""
+    with cursor() as cur:
+        cur.execute("DELETE FROM chat_history WHERE experiment_id=?", (exp_id,))
+        cur.execute("DELETE FROM experiments WHERE id=?", (exp_id,))
+
+
+def ensure_default_experiment(user_id: int) -> int:
+    """保证用户至少有一个实验，返回其 id（最早创建的那个）。"""
+    with cursor() as cur:
+        cur.execute(
+            "SELECT id FROM experiments WHERE user_id=? ORDER BY id ASC LIMIT 1",
+            (user_id,),
+        )
+        r = cur.fetchone()
+        if r:
+            return r["id"]
+        cur.execute(
+            "INSERT INTO experiments(user_id, name, description, created_at) VALUES(?,?,?,?)",
+            (user_id, "默认实验", "首次登录自动创建", int(time.time())),
+        )
+        return cur.lastrowid

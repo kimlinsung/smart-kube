@@ -130,11 +130,15 @@ function injectChat() {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
     });
 
-    // 加载历史
-    API.chatHistory().then(r => {
-        (r.history || []).forEach(h => {
-            if (h.role === 'user' || h.role === 'assistant') append(h.role, h.content);
-        });
-    }).catch(()=>{});
+    function reloadHistory() {
+        msgsEl.innerHTML = '';
+        return API.chatHistory().then(r => {
+            (r.history || []).forEach(h => {
+                if (h.role === 'user' || h.role === 'assistant') append(h.role, h.content);
+            });
+        }).catch(()=>{});
+    }
+    reloadHistory();
+    window.addEventListener('experiment:changed', reloadHistory);
 }
 window.addEventListener('DOMContentLoaded', injectChat);

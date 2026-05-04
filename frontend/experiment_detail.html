@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>智能云边端调度系统 · 实验详情</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="topbar" id="topbar"></div>
+<div class="container">
+
+    <div class="card">
+        <div class="exp-detail-head">
+            <div class="left">
+                <a href="/experiments.html" class="back-link">← 返回实验列表</a>
+                <h2 id="expName" style="margin:6px 0 4px 0;">加载中...</h2>
+                <div id="expMeta" class="exp-detail-meta">—</div>
+            </div>
+            <div class="right">
+                <button id="btnEnter" class="primary">进入此实验</button>
+                <button id="btnRefresh">刷新</button>
+            </div>
+        </div>
+        <div id="expCounts" class="exp-detail-counts"></div>
+    </div>
+
+    <div class="card">
+        <h2>实验内的 Units（云 / 边 / 端）</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>名称</th><th>状态</th><th>节点类型</th><th>节点</th><th>架构</th><th>镜像</th>
+                    <th>SSH</th><th>类型</th><th>操作</th>
+                </tr>
+            </thead>
+            <tbody id="podsBody"><tr><td colspan="9">加载中...</td></tr></tbody>
+        </table>
+    </div>
+
+</div>
+
+<input type="file" id="hiddenUpload" style="display:none" />
+
+<script src="/js/api.js"></script>
+<script src="/js/app.js"></script>
+<script src="/js/chat.js"></script>
+<script>
+const EXP_ID = Number(new URLSearchParams(location.search).get('id'));
+let ME = null;
+let CURRENT_POD_FOR_UPLOAD = null;
+let DETAIL = null;
+
+function renderHead() {
+    const exp = DETAIL.experiment;
+    document.getElementById('expName').innerHTML =
+        escapeHtml(exp.name) +
+        (DETAIL.is_current ? '<span class="current-tag">当前</span>' : '');
+    const owner = (ME && ME.role === 'admin') || (ME && exp.user_id !== ME.id)
+        ? `用户：<b>${escapeHtml(exp.owner_username || '-')}</b> · ` : '';
+    document.getElementById('expMeta').innerHTML =
+        `${owner}创建时间：${fmtTime(exp.created_at)} · 容器总数：<b>${exp.total_count}</b>`;
+    document.getElementById('expCounts').innerHTML = [
+        ['云', exp.cloud_count, 'badge-cloud'],
+        ['边', exp.edge_count, 'badge-edge'],
+        ['端', exp.device_count, 'badge-device'],
+    ].map(([l, n, c]) => `<span class="badge ${c}">${l}: ${n}</span>`).join(' ');
+    const enterBtn = document.getElementById('btnEnter');
+    if (DETAIL.is_current) {
+        enterBtn.textContent = '已是当前实验';
+        enterBtn.disabled = true;
+    } else {
+        enterBtn.textContent = '进入此实验';
+        enterBtn.disabled = false;
+    }
+}
+
+function renderPodRow(p) {
+    const sshInfo = p.ssh_port
+        ? `port:<b>${p.ssh_port}</b> user:${p.ssh_user || 'root'} pwd:<code>${escapeHtml(p.ssh_password || '')}</code>`
+        : '-';
+    const canOp = ME && (ME.role === 'admin' || String(p.owner_id) === String(ME.id));
+    const ops = canOp
+        ? `<button class="primary" data-act="shell" data-name="${p.name}">Web Shell</button>
+           <button data-act="upload" data-name="${p.name}">上传文件</button>
+           <button class="danger" data-act="del" data-name="${p.name}">删除</button>`
+        : `<span style="color:#9ca3af;font-size:12px;">他人 Pod</span>`;
+    return `
+        <td><code>${p.name}</code></td>
+        <td>${badgePhase(p.phase)}</td>
+        <td>${badgeNodeType(p.node_type)}</td>
+        <td>${p.node || '-'}</td>
+        <td>${p.arch || '-'}</td>
+        <td style="font-size:12px;">${escapeHtml(p.image || '-')}</td>
+        <td style="font-size:12px;">${sshInfo}</td>
+        <td><span class="badge badge-blue">${p.kind || '-'}</span></td>
+        <td class="row-actions">${ops}</td>`;
+}
+
+function renderPods() {
+    const body = document.getElementById('podsBody');
+    const pods = DETAIL.pods || [];
+    if (!pods.length) {
+        body.innerHTML = '<tr><td colspan="9" style="color:#6b7280">该实验暂无 Units，进入后用右下角 💬 创建。</td></tr>';
+        return;
+    }
+    body.innerHTML = '';
+    groupByNodeType(pods).forEach(({ type, items }) => {
+        body.insertAdjacentHTML('beforeend', ntGroupHeaderHTML(type, items.length, 9));
+        items.forEach(p => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = renderPodRow(p);
+            body.appendChild(tr);
+        });
+    });
+}
+
+async function loadDetail() {
+    try {
+        DETAIL = await API.getExperiment(EXP_ID);
+        renderHead();
+        renderPods();
+    } catch (e) {
+        document.getElementById('expName').textContent = '加载失败';
+        document.getElementById('expMeta').innerHTML =
+            `<span style="color:#dc2626;">${escapeHtml(e.message)}</span>`;
+        document.getElementById('podsBody').innerHTML =
+            `<tr><td colspan="9" style="color:#dc2626">${escapeHtml(e.message)}</td></tr>`;
+    }
+}
+
+document.getElementById('podsBody').addEventListener('click', async e => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    const act = btn.dataset.act, name = btn.dataset.name;
+    if (act === 'del') {
+        if (!confirm('确认删除 ' + name + '？')) return;
+        try { await API.deleteResource(name); loadDetail(); }
+        catch (err) { alert(err.message); }
+    } else if (act === 'shell') {
+        window.open('/shell.html?pod=' + encodeURIComponent(name), '_blank');
+    } else if (act === 'upload') {
+        CURRENT_POD_FOR_UPLOAD = name;
+        document.getElementById('hiddenUpload').click();
+    }
+});
+
+document.getElementById('hiddenUpload').onchange = async e => {
+    const f = e.target.files[0];
+    if (!f || !CURRENT_POD_FOR_UPLOAD) return;
+    try {
+        const r = await API.uploadToPod(f, CURRENT_POD_FOR_UPLOAD, '/tmp');
+        alert('已上传到 Units' + r.pod_path);
+    } catch (err) { alert('上传失败：' + err.message); }
+    e.target.value = '';
+};
+
+document.getElementById('btnRefresh').onclick = loadDetail;
+document.getElementById('btnEnter').onclick = async () => {
+    try {
+        await API.enterExperiment(EXP_ID);
+        const me = await API.me();
+        ME = me; renderTopbar(me);
+        await loadDetail();
+        window.dispatchEvent(new CustomEvent('experiment:changed'));
+    } catch (err) { alert('进入失败：' + err.message); }
+};
+
+window.addEventListener('chat:done', loadDetail);
+
+(async () => {
+    if (!EXP_ID) {
+        document.getElementById('expName').textContent = '参数缺失';
+        document.getElementById('expMeta').textContent = '缺少实验 id';
+        document.getElementById('podsBody').innerHTML =
+            '<tr><td colspan="9" style="color:#dc2626">URL 缺少 ?id= 参数</td></tr>';
+        await loadMe();
+        return;
+    }
+    ME = await loadMe();
+    if (!ME) return;
+    await loadDetail();
+    setInterval(loadDetail, 15000);
+})();
+</script>
+</body>
+</html>
