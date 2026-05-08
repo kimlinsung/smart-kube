@@ -43,6 +43,10 @@ SYSTEM_PROMPT = (
     "  未打标签的节点默认视为 edge\n"
     "- hostname：固定调度到指定节点（主机名）\n"
     "- image：容器镜像，如 ubuntu:20.04 或 docker.io/library/ubuntu:20.04\n"
+    "- gpu：申请的 nvidia.com/gpu 数量（整数，默认 0）。当用户提到 GPU/显卡/cuda/nvidia 等\n"
+    "  关键字时必须带上 gpu 参数（未明示数量时按 1 处理）。集群中部分节点装有\n"
+    "  k8s-device-plugin，调度器会自动选择有可用 GPU 的节点；gpu>0 时容器镜像会被\n"
+    "  强制设置为 docker.io/nvidia/cuda:11.8.0-runtime-ubuntu20.04，此时不要再传 image。\n"
     "arch 与 node_type 可同时指定（取交集），hostname 优先级最高。"
     "所有参数均有默认值，不需要用户补充也能执行。"
     "如果用户上传了 Python 代码并要求执行，请使用 run_uploaded_python 工具。"
@@ -163,6 +167,7 @@ def _fallback_chat(user: dict, text: str, uploaded_file: str | None) -> str:
             "image": parsed.get("image"),
             "count": parsed.get("count", 1),
             "node_type": parsed.get("node_type"),
+            "gpu": parsed.get("gpu", 0),
         })
     if action == "list":
         return tools_mod.list_my_resources.invoke({})

@@ -108,6 +108,22 @@ def list_resources():
     return jsonify({"pods": pods})
 
 
+@bp.get("/resources/<pod_name>/describe")
+@auth.login_required
+def describe_resource(pod_name):
+    u = request.current_user
+    try:
+        k8s_client.assert_pod_owned(pod_name, u)
+    except PermissionError as e:
+        return jsonify({"error": str(e)}), 403
+    except Exception as e:
+        return jsonify({"error": str(e)}), 404
+    info = k8s_client.describe_pod(pod_name)
+    if info.get("error"):
+        return jsonify(info), 404
+    return jsonify(info)
+
+
 @bp.delete("/resources/<pod_name>")
 @auth.login_required
 def delete_resource(pod_name):

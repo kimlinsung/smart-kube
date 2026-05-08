@@ -40,6 +40,7 @@ const API = {
 
     listResources() { return this.get('/api/resources'); },
     deleteResource(name) { return this.del('/api/resources/' + encodeURIComponent(name)); },
+    describeResource(name) { return this.get('/api/resources/' + encodeURIComponent(name) + '/describe'); },
     clusterInfo() { return this.get('/api/cluster/info'); },
 
     chat(msg) { return this.post('/api/chat', { message: msg }); },

@@ -37,13 +37,28 @@ function injectChat() {
     fab.onclick = () => panel.classList.toggle('open');
     panel.querySelector('#chatClose').onclick = close;
 
-    function append(role, content) {
+    function fmtChatTime(ts) {
+        const d = ts ? new Date(ts * 1000) : new Date();
+        const pad = n => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ` +
+               `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+
+    function append(role, content, ts) {
         const div = document.createElement('div');
         div.className = 'chat-msg ' + role;
+        const wrap = document.createElement('div');
+        wrap.className = 'chat-bubble-wrap';
         const b = document.createElement('div');
         b.className = 'chat-bubble'; b.textContent = content;
-        div.appendChild(b); msgsEl.appendChild(div);
+        const time = document.createElement('div');
+        time.className = 'chat-time'; time.textContent = fmtChatTime(ts);
+        wrap.appendChild(b);
+        wrap.appendChild(time);
+        div.appendChild(wrap);
+        msgsEl.appendChild(div);
         msgsEl.scrollTop = msgsEl.scrollHeight;
+        return { bubble: b, time };
     }
 
     panel.querySelector('#chatClear').onclick = async () => {
@@ -73,10 +88,17 @@ function injectChat() {
         // 创建助手气泡（占位）
         const div = document.createElement('div');
         div.className = 'chat-msg assistant';
+        const wrap = document.createElement('div');
+        wrap.className = 'chat-bubble-wrap';
         const bubble = document.createElement('div');
         bubble.className = 'chat-bubble';
         bubble.textContent = '思考中...';
-        div.appendChild(bubble);
+        const timeEl = document.createElement('div');
+        timeEl.className = 'chat-time';
+        timeEl.textContent = fmtChatTime();
+        wrap.appendChild(bubble);
+        wrap.appendChild(timeEl);
+        div.appendChild(wrap);
         msgsEl.appendChild(div);
         msgsEl.scrollTop = msgsEl.scrollHeight;
 
@@ -134,7 +156,7 @@ function injectChat() {
         msgsEl.innerHTML = '';
         return API.chatHistory().then(r => {
             (r.history || []).forEach(h => {
-                if (h.role === 'user' || h.role === 'assistant') append(h.role, h.content);
+                if (h.role === 'user' || h.role === 'assistant') append(h.role, h.content, h.created_at);
             });
         }).catch(()=>{});
     }

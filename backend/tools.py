@@ -65,9 +65,10 @@ def list_my_resources() -> str:
         ssh = ""
         if p.get("ssh_port"):
             ssh = f" | SSH: ssh -p {p['ssh_port']} {p.get('ssh_user','root')}@<节点IP> 密码:{p.get('ssh_password','')}"
+        gpu = f" | GPU:{p.get('gpu')}" if p.get("gpu") else ""
         nt = p.get("node_type", "edge")
         lines.append(
-            f"- {p['name']} | 状态:{p['phase']} | 节点:{p['node']}[{nt}] | 架构:{p['arch']} | 镜像:{p['image']}{ssh}"
+            f"- {p['name']} | 状态:{p['phase']} | 节点:{p['node']}[{nt}] | 架构:{p['arch']} | 镜像:{p['image']}{gpu}{ssh}"
         )
     return "你名下的资源：\n" + "\n".join(lines)
 
@@ -81,6 +82,7 @@ def create_ssh_container(
     memory: Optional[str] = None,
     count: int = 1,
     node_type: Optional[str] = None,
+    gpu: int = 0,
 ) -> str:
     """创建支持 SSH 登录的 Linux 容器。所有参数均可选，可自由组合：
     - image（如 ubuntu:20.04 / docker.io/library/ubuntu:20.04）：指定容器镜像
@@ -88,26 +90,32 @@ def create_ssh_container(
     - node_type（cloud/edge/device）：通过 node-type 标签调度到云/边缘/端设备节点
     - hostname：固定调度到指定节点（主机名），优先级最高
     - arch 与 node_type 可同时指定，取交集（如 riscv64 架构的云节点）
+    - gpu（整数，默认 0）：申请 nvidia.com/gpu 数量。>0 时会自动只调度到装了
+      k8s-device-plugin 的节点，并强制使用 docker.io/nvidia/cuda:11.8.0-runtime-ubuntu20.04
+      镜像（即此时 image 参数会被忽略）。
     - 不填任何参数 → 在任意可用节点上用默认镜像创建
     可一次创建多个（count 默认 1，上限 10）。
     """
     count = max(1, min(int(count or 1), 10))
+    gpu = max(0, int(gpu or 0))
     out = []
     for _ in range(count):
         info = k8s_client.create_ssh_pod(
             _user(), arch=arch, hostname=hostname, image=image,
             cpu=cpu, memory=memory, node_type=node_type,
-            experiment_id=_exp(),
+            experiment_id=_exp(), gpu=gpu,
         )
         _audit("create_ssh_pod", info)
         out.append(info)
     msg = ["✅ 已创建 {} 个 SSH 容器：".format(len(out))]
     for o in out:
         nt = o.get("node_type", "edge")
+        gpu_part = f" GPU:{o.get('gpu')}" if o.get("gpu") else ""
         msg.append(
-            f"- {o['pod_name']} 节点:{o['node']}[{nt}] 架构:{o['arch']} 镜像:{o['image']}\n"
+            f"- {o['pod_name']} 节点:{o['node']}[{nt}] 架构:{o['arch']} 镜像:{o['image']}{gpu_part}\n"
             f"  连接:{o['ssh_command']}  密码:{o['ssh_password']}\n"
             f"  说明:容器启动会安装 sshd，首次连接可能需要等待 30-60 秒"
+            + ("，GPU 镜像较大首次拉取可能更久" if o.get("gpu") else "")
         )
     return "\n".join(msg)
 
@@ -277,6 +285,12 @@ def tools_for(user: dict):
 ARCH_PATTERN = re.compile(r"\b(riscv64|riscv|arm64|aarch64|arm|x86_64|x86|amd64)\b", re.I)
 COUNT_PATTERN = re.compile(r"(\d+)\s*个")
 HOSTNAME_PATTERN = re.compile(r"(?:节点|hostname|主机|机器)[^a-zA-Z0-9_-]{0,4}([a-zA-Z][\w\-.]*)", re.I)
+# 匹配 GPU 数量：如"2张GPU"、"1块gpu"、"3 gpu"、"GPU=2"、"--gpu 1"
+GPU_COUNT_PATTERN = re.compile(
+    r"(?:(\d+)\s*(?:张|块|个|片)?\s*(?:gpu|nvidia|显卡|cuda)|(?:gpu|nvidia|显卡|cuda)[^0-9]{0,4}(\d+))",
+    re.I,
+)
+GPU_KEYWORD_PATTERN = re.compile(r"\b(gpu|nvidia|cuda|显卡)\b", re.I)
 # 匹配镜像名：registry/image:tag 或 image:tag（tag 必须含点/字母，避免误匹配中文数字）
 IMAGE_PATTERN = re.compile(
     r"("
@@ -310,6 +324,20 @@ def _detect_node_type(text: str) -> Optional[str]:
     return None
 
 
+def _detect_gpu(text: str) -> int:
+    """从文本中识别 GPU 申请数量；命中 GPU 关键字但未带数字时默认 1。"""
+    m = GPU_COUNT_PATTERN.search(text)
+    if m:
+        n = m.group(1) or m.group(2)
+        try:
+            return max(1, int(n))
+        except (TypeError, ValueError):
+            pass
+    if GPU_KEYWORD_PATTERN.search(text):
+        return 1
+    return 0
+
+
 def fallback_parse(text: str) -> Optional[dict]:
     """无 LLM 时基于规则解析常见指令。"""
     t = text.strip()
@@ -322,10 +350,11 @@ def fallback_parse(text: str) -> Optional[dict]:
     hostname = host_m.group(1) if host_m else None
     image = image_m.group(1) if image_m else None
     node_type = _detect_node_type(t)
+    gpu = _detect_gpu(t)
     if any(k in t for k in ["创建", "新建", "拉起", "启动一个", "起一个", "起一批"]) or (
         image and not any(k in t for k in ["删除", "查看", "列出"])
-    ):
-        return {"action": "create_ssh", "arch": arch, "count": count, "hostname": hostname, "image": image, "node_type": node_type}
+    ) or gpu > 0:
+        return {"action": "create_ssh", "arch": arch, "count": count, "hostname": hostname, "image": image, "node_type": node_type, "gpu": gpu}
     if any(k in t for k in ["列出", "查看", "我的资源", "查我", "我有哪些"]):
         return {"action": "list"}
     if "删除" in t or "销毁" in t or "干掉" in t:

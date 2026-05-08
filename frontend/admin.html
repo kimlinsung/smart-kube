@@ -130,7 +130,7 @@ async function loadAllPods() {
                 tr.innerHTML = `
                     <td><code>${p.name}</code></td>
                     <td>${p.owner_username||'-'}</td>
-                    <td>${badgePhase(p.phase)}</td>
+                    <td>${badgePhase(p.phase, p.name)}</td>
                     <td>${badgeNodeType(p.node_type)}</td>
                     <td>${p.node||'-'}</td>
                     <td>${p.arch||'-'}</td>
@@ -139,6 +139,7 @@ async function loadAllPods() {
                 body.appendChild(tr);
             });
         });
+        bindPhaseHover(body);
     } catch (e) {
         body.innerHTML = `<tr><td colspan="8" style="color:#dc2626">${e.message}</td></tr>`;
     }

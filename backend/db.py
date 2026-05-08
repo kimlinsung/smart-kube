@@ -130,12 +130,12 @@ def get_chat(user_id, limit=20, experiment_id=None):
     with cursor() as cur:
         if experiment_id is None:
             cur.execute(
-                "SELECT role, content FROM chat_history WHERE user_id=? ORDER BY id DESC LIMIT ?",
+                "SELECT role, content, created_at FROM chat_history WHERE user_id=? ORDER BY id DESC LIMIT ?",
                 (user_id, limit),
             )
         else:
             cur.execute(
-                "SELECT role, content FROM chat_history WHERE user_id=? AND experiment_id=? ORDER BY id DESC LIMIT ?",
+                "SELECT role, content, created_at FROM chat_history WHERE user_id=? AND experiment_id=? ORDER BY id DESC LIMIT ?",
                 (user_id, experiment_id, limit),
             )
         rows = [dict(r) for r in cur.fetchall()]

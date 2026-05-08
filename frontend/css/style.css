@@ -42,6 +42,30 @@ table th { background: #f9fafb; font-weight: 600; color: #374151; }
 .row-actions button.primary { color: #fff; background: #2563eb; border-color: #2563eb; }
 
 .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+.phase-hover { cursor: help; outline: none; }
+.phase-hover:hover, .phase-hover:focus { box-shadow: 0 0 0 2px rgba(37,99,235,.25); }
+
+.phase-tip {
+    position: absolute; z-index: 200; display: none;
+    max-width: 480px; min-width: 320px;
+    background: #1f2937; color: #e5e7eb; border-radius: 8px;
+    padding: 10px 12px; font-size: 12px; line-height: 1.5;
+    box-shadow: 0 8px 24px rgba(0,0,0,.25);
+    white-space: normal; word-break: break-word;
+    pointer-events: none;
+    max-height: 360px; overflow: auto;
+}
+.phase-tip code { color: #fbbf24; }
+.phase-tip-title { font-weight: 600; margin-bottom: 4px; }
+.phase-tip-section {
+    margin-top: 6px; padding-top: 4px; font-weight: 600; color: #93c5fd;
+    border-top: 1px solid #374151;
+}
+.phase-tip-msg { color: #9ca3af; margin: 2px 0 4px 12px; font-size: 11px; }
+.phase-tip-meta { color: #9ca3af; font-size: 11px; }
+.phase-ev { margin: 4px 0; }
+.phase-ev-warn { color: #fca5a5; font-weight: 600; }
+.phase-ev-norm { color: #86efac; font-weight: 600; }
 .badge-green { background: #dcfce7; color: #166534; }
 .badge-red { background: #fee2e2; color: #991b1b; }
 .badge-yellow { background: #fef9c3; color: #854d0e; }
@@ -193,12 +217,20 @@ table th { background: #f9fafb; font-weight: 600; color: #374151; }
 }
 .chat-msg { margin-bottom: 10px; display: flex; }
 .chat-msg.user { justify-content: flex-end; }
+.chat-bubble-wrap {
+    max-width: 80%; display: flex; flex-direction: column;
+}
+.chat-msg.user .chat-bubble-wrap { align-items: flex-end; }
+.chat-msg.assistant .chat-bubble-wrap { align-items: flex-start; }
 .chat-bubble {
-    max-width: 80%; padding: 8px 12px; border-radius: 8px;
+    padding: 8px 12px; border-radius: 8px;
     font-size: 13px; white-space: pre-wrap; word-break: break-word;
 }
 .chat-msg.user .chat-bubble { background: #2563eb; color: #fff; }
 .chat-msg.assistant .chat-bubble { background: #fff; color: #111827; border: 1px solid #e5e7eb; }
+.chat-time {
+    margin-top: 3px; font-size: 10px; color: #9ca3af; line-height: 1;
+}
 .chat-input {
     border-top: 1px solid #e5e7eb; padding: 10px; background: #fff;
 }

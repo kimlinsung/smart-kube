@@ -39,6 +39,10 @@ _LABEL_APP = "smartkube/app"
 _LABEL_KIND = "smartkube/kind"  # ssh / exec / generic
 _LABEL_EXPERIMENT = "smartkube/experiment-id"
 
+# 申请 GPU 时强制使用的 CUDA 镜像（必须与 nvidia.com/gpu 资源配套）
+GPU_IMAGE = "docker.io/nvidia/cuda:11.8.0-runtime-ubuntu20.04"
+GPU_RESOURCE_KEY = "nvidia.com/gpu"
+
 # 用户输入的架构名 → kubernetes.io/arch 标准值
 _ARCH_ALIASES: dict[str, str] = {
     "riscv": "riscv64",
@@ -149,20 +153,33 @@ def cluster_info() -> dict:
     }
 
 
+def _node_gpu_capacity(n: dict) -> int:
+    """节点上 nvidia.com/gpu 可分配数量（来自 device-plugin 注册）。"""
+    cap = n.get("allocatable") or n.get("capacity") or {}
+    try:
+        return int(cap.get(GPU_RESOURCE_KEY, 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def find_node_by_arch_or_hostname(
     arch: Optional[str] = None,
     hostname: Optional[str] = None,
     node_type: Optional[str] = None,
+    gpu: int = 0,
 ) -> Optional[dict]:
     """根据条件筛选一个 Ready 节点。
     hostname 精确匹配优先级最高；arch 规范化后匹配 kubernetes.io/arch；
     node_type 匹配 node-type 标签（cloud/edge/device）。
+    gpu>0 时要求节点 allocatable 上有 nvidia.com/gpu 且 ≥ gpu。
     任何条件若指定但无匹配节点，则返回 None（不静默兜底）。
     """
     nodes = list_nodes()
     if hostname:
         for n in nodes:
             if n["hostname"] == hostname or n["name"] == hostname:
+                if gpu > 0 and _node_gpu_capacity(n) < gpu:
+                    return None
                 return n
         return None
 
@@ -172,10 +189,12 @@ def find_node_by_arch_or_hostname(
         candidates = [n for n in candidates if _normalize_arch(n["arch"]) == arch_norm]
     if node_type:
         candidates = [n for n in candidates if n.get("node_type", "edge") == node_type]
+    if gpu > 0:
+        candidates = [n for n in candidates if _node_gpu_capacity(n) >= gpu]
 
     if candidates:
         return candidates[0]
-    if arch or node_type:
+    if arch or node_type or gpu > 0:
         return None  # 有条件但无匹配，不静默兜底
     return None
 
@@ -255,23 +274,33 @@ def create_ssh_pod(
     name_prefix: str = "ssh",
     node_type: Optional[str] = None,
     experiment_id: Optional[int] = None,
+    gpu: int = 0,
 ) -> dict:
     """创建一个安装并启动 SSHD 的 Pod，并通过 NodePort Service 暴露 22 端口。
 
     返回：包含 pod_name、node、node_type、ssh_host、ssh_port、ssh_user、ssh_password 的 dict。
+    gpu>0 时强制使用 GPU_IMAGE，并在 resources.limits 上申请 nvidia.com/gpu。
     """
     ensure_namespace()
+    gpu = max(0, int(gpu or 0))
     arch_canonical = _normalize_arch(arch) if arch else None
-    node = find_node_by_arch_or_hostname(arch=arch_canonical, hostname=hostname, node_type=node_type)
+    node = find_node_by_arch_or_hostname(
+        arch=arch_canonical, hostname=hostname, node_type=node_type, gpu=gpu,
+    )
     if not node:
         parts = []
         if hostname:   parts.append(f"hostname={hostname}")
         if arch_canonical: parts.append(f"arch={arch_canonical}")
         if node_type:  parts.append(f"node-type={node_type}")
+        if gpu > 0:    parts.append(f"nvidia.com/gpu>={gpu}")
         cond = "，".join(parts) if parts else "（集群无就绪节点）"
         raise RuntimeError(f"未找到符合条件的就绪节点：{cond}")
 
-    image_resolved = _resolve_image(arch_canonical or node["arch"], image)
+    if gpu > 0:
+        # 申请 GPU 时强制使用 CUDA 镜像，避免镜像内缺驱动/库导致跑不起来
+        image_resolved = GPU_IMAGE
+    else:
+        image_resolved = _resolve_image(arch_canonical or node["arch"], image)
     owner_label = str(user["id"])
     pod_name = _make_pod_name(name_prefix, user["username"])
     root_pwd = SSH_CONF.get("default_root_password", "smartkube")
@@ -294,22 +323,25 @@ def create_ssh_pod(
         "exec /usr/sbin/sshd -D -e"
     )
 
+    requests = {
+        "cpu": cpu or RES_CONF.get("default_cpu_request", "100m"),
+        "memory": memory or RES_CONF.get("default_memory_request", "128Mi"),
+    }
+    limits = {
+        "cpu": cpu or RES_CONF.get("default_cpu_limit", "1"),
+        "memory": memory or RES_CONF.get("default_memory_limit", "1Gi"),
+    }
+    if gpu > 0:
+        # extended resources（如 nvidia.com/gpu）只能在 limits 上申请，且必须为整数
+        limits[GPU_RESOURCE_KEY] = str(gpu)
+
     container = client.V1Container(
         name="main",
         image=image_resolved,
         image_pull_policy="IfNotPresent",
         command=["/bin/sh", "-c", start_cmd],
         ports=[client.V1ContainerPort(container_port=22)],
-        resources=client.V1ResourceRequirements(
-            requests={
-                "cpu": cpu or RES_CONF.get("default_cpu_request", "100m"),
-                "memory": memory or RES_CONF.get("default_memory_request", "128Mi"),
-            },
-            limits={
-                "cpu": cpu or RES_CONF.get("default_cpu_limit", "1"),
-                "memory": memory or RES_CONF.get("default_memory_limit", "1Gi"),
-            },
-        ),
+        resources=client.V1ResourceRequirements(requests=requests, limits=limits),
     )
 
     labels = {
@@ -333,6 +365,7 @@ def create_ssh_pod(
                 "smartkube/ssh-user": "root",
                 "smartkube/ssh-password": root_pwd,
                 "smartkube/experiment-id": str(experiment_id) if experiment_id else "",
+                "smartkube/gpu": str(gpu) if gpu > 0 else "",
             },
         ),
         spec=_build_pod_spec(
@@ -389,6 +422,7 @@ def create_ssh_pod(
         "ssh_password": root_pwd,
         "ssh_command": f"ssh -p {nodeport} root@{node['internal_ip'] or node['name']}",
         "experiment_id": experiment_id,
+        "gpu": gpu,
     }
 
 
@@ -429,6 +463,7 @@ def list_user_pods(user: dict, all_users: bool = False) -> list[dict]:
             "ssh_user": ann.get("smartkube/ssh-user"),
             "ssh_password": ann.get("smartkube/ssh-password"),
             "experiment_id": int(exp_label) if exp_label.isdigit() else None,
+            "gpu": int(ann.get("smartkube/gpu") or 0) if (ann.get("smartkube/gpu") or "").isdigit() else 0,
         })
     return out
 
@@ -447,6 +482,93 @@ def get_pod(pod_name: str) -> Optional[dict]:
         "phase": p.status.phase,
         "ssh_port": ann.get("smartkube/ssh-port"),
     }
+
+
+def describe_pod(pod_name: str) -> dict:
+    """返回 kubectl describe 风格的诊断信息：phase / 条件 / 容器状态 / 最近事件。"""
+    try:
+        p = core_v1.read_namespaced_pod(pod_name, NAMESPACE)
+    except ApiException as e:
+        if e.status == 404:
+            return {"error": f"Pod {pod_name} 不存在"}
+        return {"error": f"读取 Pod 失败：{e.reason}"}
+
+    status = p.status
+    info: dict = {
+        "name": p.metadata.name,
+        "namespace": p.metadata.namespace,
+        "node": p.spec.node_name or "",
+        "phase": status.phase,
+        "reason": status.reason or "",
+        "message": status.message or "",
+        "start_time": status.start_time.isoformat() if status.start_time else "",
+        "conditions": [],
+        "container_statuses": [],
+        "events": [],
+    }
+
+    for c in (status.conditions or []):
+        info["conditions"].append({
+            "type": c.type,
+            "status": c.status,
+            "reason": c.reason or "",
+            "message": c.message or "",
+            "last_transition_time": c.last_transition_time.isoformat() if c.last_transition_time else "",
+        })
+
+    for cs in (status.container_statuses or []):
+        st = cs.state
+        state_kind, state_reason, state_message = "Unknown", "", ""
+        if st:
+            if st.waiting:
+                state_kind = "Waiting"
+                state_reason = st.waiting.reason or ""
+                state_message = st.waiting.message or ""
+            elif st.running:
+                state_kind = "Running"
+                state_message = f"started_at={st.running.started_at.isoformat() if st.running.started_at else ''}"
+            elif st.terminated:
+                state_kind = "Terminated"
+                state_reason = st.terminated.reason or ""
+                state_message = st.terminated.message or f"exit_code={st.terminated.exit_code}"
+        last = cs.last_state
+        last_info = ""
+        if last and last.terminated:
+            last_info = f"上次终止: reason={last.terminated.reason or ''}, exit_code={last.terminated.exit_code}"
+        info["container_statuses"].append({
+            "name": cs.name,
+            "ready": cs.ready,
+            "restart_count": cs.restart_count,
+            "image": cs.image,
+            "state": state_kind,
+            "reason": state_reason,
+            "message": state_message,
+            "last_state": last_info,
+        })
+
+    try:
+        ev_list = core_v1.list_namespaced_event(
+            NAMESPACE,
+            field_selector=f"involvedObject.name={pod_name},involvedObject.kind=Pod",
+        ).items
+        ev_list.sort(
+            key=lambda e: (e.last_timestamp or e.event_time or e.metadata.creation_timestamp or 0),
+            reverse=True,
+        )
+        for e in ev_list[:15]:
+            ts = e.last_timestamp or e.event_time or e.metadata.creation_timestamp
+            info["events"].append({
+                "type": e.type or "",
+                "reason": e.reason or "",
+                "message": (e.message or "").strip(),
+                "count": e.count or 1,
+                "time": ts.isoformat() if ts else "",
+                "from": (e.source.component if e.source else "") or "",
+            })
+    except ApiException:
+        pass
+
+    return info
 
 
 def assert_pod_owned(pod_name: str, user: dict) -> dict:
@@ -540,6 +662,7 @@ def list_pods_by_experiment(experiment_id: int) -> list[dict]:
             "ssh_user": ann.get("smartkube/ssh-user"),
             "ssh_password": ann.get("smartkube/ssh-password"),
             "experiment_id": experiment_id,
+            "gpu": int(ann.get("smartkube/gpu") or 0) if (ann.get("smartkube/gpu") or "").isdigit() else 0,
         })
     return out
 

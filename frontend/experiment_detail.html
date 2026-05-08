@@ -86,7 +86,7 @@ function renderPodRow(p) {
         : `<span style="color:#9ca3af;font-size:12px;">他人 Pod</span>`;
     return `
         <td><code>${p.name}</code></td>
-        <td>${badgePhase(p.phase)}</td>
+        <td>${badgePhase(p.phase, p.name)}</td>
         <td>${badgeNodeType(p.node_type)}</td>
         <td>${p.node || '-'}</td>
         <td>${p.arch || '-'}</td>
@@ -112,6 +112,7 @@ function renderPods() {
             body.appendChild(tr);
         });
     });
+    bindPhaseHover(body);
 }
 
 async function loadDetail() {

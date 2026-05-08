@@ -1,0 +1,32 @@
+
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+external-controller: 127.0.0.1:9090
+
+proxies:
+  - name: "cpolar-socks5"
+    type: socks5
+    server: 10.222.0.2   # 改成你自己的 cpolar 域名
+    port: 38089              # 改成你自己的 cpolar 端口
+    username: jinlinsong
+    password: "@ACwing100"
+    tls: false
+    udp: true
+
+proxy-groups:
+  - name: "Proxy"
+    type: select
+    proxies:
+      - cpolar-socks5
+      - DIRECT
+
+rules:
+  # 内网 IP 全部走代理
+  - IP-CIDR,192.168.0.0/16,cpolar-socks5
+  - IP-CIDR,10.0.0.0/8,cpolar-socks5
+  - IP-CIDR,172.16.0.0/12,cpolar-socks5
+
+  # 其余全部直连
+  - MATCH,DIRECT
