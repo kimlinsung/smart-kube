@@ -10,11 +10,11 @@
 <div class="container">
     <div class="card">
         <h2>集群概览</h2>
-        <div id="cluster" style="font-size:13px;color:#374151;">加载中...</div>
+        <div id="cluster" class="stat-row">加载中...</div>
     </div>
     <div class="card">
         <h2>我的 Units / 容器
-            <button id="refresh" style="float:right;font-size:12px;padding:4px 10px;border:1px solid #d1d5db;background:#fff;border-radius:4px;">刷新</button>
+            <button id="refresh" class="btn-sm btn-ghost">刷新</button>
         </h2>
         <table>
             <thead>
@@ -39,9 +39,11 @@ let CURRENT_POD_FOR_UPLOAD = null;
 async function loadCluster() {
     try {
         const c = await API.clusterInfo();
-        document.getElementById('cluster').innerHTML =
-            `集群 版本：<b>${c.version}</b> &nbsp; 节点总数：<b>${c.node_count}</b> &nbsp;` +
-            ` 就绪节点：<b style="color:#059669">${c.ready_nodes}</b> &nbsp; namespace：<b>${c.namespace}</b>`;
+        document.getElementById('cluster').innerHTML = `
+            <div class="stat"><span class="stat-label">集群版本</span><span class="stat-value">${escapeHtml(c.version)}</span></div>
+            <div class="stat"><span class="stat-label">节点总数</span><span class="stat-value">${c.node_count}</span></div>
+            <div class="stat"><span class="stat-label">就绪节点</span><span class="stat-value success">${c.ready_nodes}</span></div>
+            <div class="stat"><span class="stat-label">命名空间</span><span class="stat-value">${escapeHtml(c.namespace)}</span></div>`;
     } catch (e) {
         document.getElementById('cluster').textContent = '加载失败：' + e.message;
     }

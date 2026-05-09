@@ -99,11 +99,17 @@ def init_db():
         cur.execute("PRAGMA table_info(users)")
         ucols = {r["name"] for r in cur.fetchall()}
         for col, ddl in [
-            ("feishu_open_id",  "ALTER TABLE users ADD COLUMN feishu_open_id TEXT"),
-            ("feishu_union_id", "ALTER TABLE users ADD COLUMN feishu_union_id TEXT"),
-            ("name",            "ALTER TABLE users ADD COLUMN name TEXT"),
-            ("email",           "ALTER TABLE users ADD COLUMN email TEXT"),
-            ("avatar_url",      "ALTER TABLE users ADD COLUMN avatar_url TEXT"),
+            ("feishu_open_id",   "ALTER TABLE users ADD COLUMN feishu_open_id TEXT"),
+            ("feishu_union_id",  "ALTER TABLE users ADD COLUMN feishu_union_id TEXT"),
+            ("name",             "ALTER TABLE users ADD COLUMN name TEXT"),
+            ("email",            "ALTER TABLE users ADD COLUMN email TEXT"),
+            ("avatar_url",       "ALTER TABLE users ADD COLUMN avatar_url TEXT"),
+            # 飞书额外信息：英文名 / 手机 / 企业邮箱 / 大图头像 / 租户 key
+            ("en_name",          "ALTER TABLE users ADD COLUMN en_name TEXT"),
+            ("mobile",           "ALTER TABLE users ADD COLUMN mobile TEXT"),
+            ("enterprise_email", "ALTER TABLE users ADD COLUMN enterprise_email TEXT"),
+            ("avatar_big",       "ALTER TABLE users ADD COLUMN avatar_big TEXT"),
+            ("tenant_key",       "ALTER TABLE users ADD COLUMN tenant_key TEXT"),
         ]:
             if col not in ucols:
                 cur.execute(ddl)

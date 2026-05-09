@@ -11,7 +11,7 @@
 
     <div class="card">
         <h2>集群节点
-            <button id="refreshNodes" style="float:right;font-size:12px;padding:4px 10px;border:1px solid #d1d5db;background:#fff;border-radius:4px;">刷新</button>
+            <button id="refreshNodes" class="btn-sm btn-ghost">刷新</button>
         </h2>
         <table>
             <thead><tr>
@@ -34,15 +34,15 @@
 
     <div class="card">
         <h2>用户管理</h2>
-        <div style="margin-bottom:12px;font-size:13px;">
-            新建用户：
-            <input id="nu" placeholder="用户名" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;" />
-            <input id="np" placeholder="密码" type="password" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;" />
-            <select id="nr" style="padding:4px;border:1px solid #d1d5db;border-radius:4px;">
+        <div class="form-row">
+            <span class="label">新建用户</span>
+            <input id="nu" placeholder="用户名" />
+            <input id="np" placeholder="密码" type="password" />
+            <select id="nr">
                 <option value="user">普通用户</option>
                 <option value="admin">管理员</option>
             </select>
-            <button id="createUser" class="primary" style="padding:4px 10px;background:#2563eb;color:#fff;border:0;border-radius:4px;">创建</button>
+            <button id="createUser" class="primary btn-sm">创建</button>
         </div>
         <table>
             <thead><tr>

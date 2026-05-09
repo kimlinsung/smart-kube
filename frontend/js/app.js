@@ -20,7 +20,7 @@ function renderTopbar(me) {
     // 显示名优先飞书 name，其次本地 username
     const displayName = me.name || me.username;
     const avatar = me.avatar_url
-        ? `<img src="${me.avatar_url}" alt="" style="width:22px;height:22px;border-radius:50%;vertical-align:middle;margin-right:6px;" />`
+        ? `<img src="${me.avatar_url}" alt="" style="width:24px;height:24px;border-radius:50%;border:1px solid rgba(255,255,255,.15);" />`
         : '';
     const feishuTag = me.feishu_open_id
         ? `<span class="badge badge-blue" title="飞书登录">飞书</span>` : '';
@@ -34,13 +34,125 @@ function renderTopbar(me) {
       </nav>
       <div class="user">
         ${expName}
-        ${avatar}${escapeHtml(displayName)} ${feishuTag}
+        <span class="topbar-user" tabindex="0" style="display:inline-flex;align-items:center;gap:8px;cursor:default;">
+          ${avatar}${escapeHtml(displayName)}
+        </span>
+        ${feishuTag}
         <span class="badge ${isAdmin ? 'badge-blue' : 'badge-green'}">${isAdmin ? '管理员' : '用户'}</span>
         <button id="btnLogout">退出</button>
       </div>`;
     document.getElementById('btnLogout').onclick = async () => {
         await API.logout(); window.location.href = '/login.html';
     };
+    bindUserCardHover(el.querySelector('.topbar-user'), me);
+}
+
+// ---------- 用户名悬停名片 ----------
+let _userCard = null;
+let _userCardHideTimer = null;
+
+function _userCardEl() {
+    if (_userCard) return _userCard;
+    _userCard = document.createElement('div');
+    _userCard.className = 'user-card';
+    _userCard.addEventListener('mouseenter', () => {
+        if (_userCardHideTimer) { clearTimeout(_userCardHideTimer); _userCardHideTimer = null; }
+    });
+    _userCard.addEventListener('mouseleave', _scheduleHideUserCard);
+    document.body.appendChild(_userCard);
+    return _userCard;
+}
+
+function _scheduleHideUserCard() {
+    if (_userCardHideTimer) clearTimeout(_userCardHideTimer);
+    _userCardHideTimer = setTimeout(() => {
+        if (_userCard) _userCard.classList.remove('open');
+    }, 180);
+}
+
+function _renderUserCard(me) {
+    const isAdmin = me.role === 'admin';
+    const isFeishu = !!me.feishu_open_id;
+    const avatarSrc = me.avatar_big || me.avatar_url || '';
+    const initials = (me.name || me.username || '?').trim().slice(0, 1).toUpperCase();
+    const avatarBlock = avatarSrc
+        ? `<img src="${escapeHtml(avatarSrc)}" alt="" />`
+        : `<div class="user-card-initials">${escapeHtml(initials)}</div>`;
+
+    const rows = [];
+    rows.push(['用户名', `<code>${escapeHtml(me.username)}</code>`]);
+    if (me.en_name && me.en_name !== me.name) {
+        rows.push(['英文名', escapeHtml(me.en_name)]);
+    }
+    if (me.email) {
+        rows.push(['邮箱', `<a href="mailto:${escapeHtml(me.email)}">${escapeHtml(me.email)}</a>`]);
+    }
+    if (me.enterprise_email && me.enterprise_email !== me.email) {
+        rows.push(['企业邮箱', `<a href="mailto:${escapeHtml(me.enterprise_email)}">${escapeHtml(me.enterprise_email)}</a>`]);
+    }
+    if (me.mobile) {
+        rows.push(['手机', `<a href="tel:${escapeHtml(me.mobile)}">${escapeHtml(me.mobile)}</a>`]);
+    }
+    if (me.created_at) {
+        rows.push(['加入时间', escapeHtml(fmtTime(me.created_at))]);
+    }
+    if (isFeishu && me.tenant_key) {
+        rows.push(['飞书租户', `<code title="tenant_key">${escapeHtml(me.tenant_key.slice(0, 12))}…</code>`]);
+    }
+
+    const sourceTag = isFeishu
+        ? '<span class="badge badge-blue">飞书登录</span>'
+        : '<span class="badge badge-green">本地账号</span>';
+    const roleTag = isAdmin
+        ? '<span class="badge badge-blue">管理员</span>'
+        : '<span class="badge badge-green">普通用户</span>';
+
+    const rowsHtml = rows.map(([k, v]) =>
+        `<div class="user-card-row"><span class="k">${k}</span><span class="v">${v}</span></div>`
+    ).join('');
+
+    return `
+      <div class="user-card-head">
+        <div class="user-card-avatar">${avatarBlock}</div>
+        <div class="user-card-id">
+          <div class="user-card-name">${escapeHtml(me.name || me.username)}</div>
+          ${me.en_name && me.en_name !== me.name ? `<div class="user-card-sub">${escapeHtml(me.en_name)}</div>` : ''}
+          <div class="user-card-tags">${roleTag} ${sourceTag}</div>
+        </div>
+      </div>
+      <div class="user-card-body">${rowsHtml}</div>`;
+}
+
+function _showUserCard(target, me) {
+    const card = _userCardEl();
+    card.innerHTML = _renderUserCard(me);
+    card.classList.add('open');
+    // 暂时显示以测量实际尺寸，再定位
+    const rect = target.getBoundingClientRect();
+    const cardRect = card.getBoundingClientRect();
+    let left = rect.right + window.scrollX - cardRect.width;
+    if (left < 12) left = 12;
+    if (left + cardRect.width > window.innerWidth - 12) {
+        left = window.innerWidth - cardRect.width - 12;
+    }
+    let top = rect.bottom + window.scrollY + 8;
+    if (top + cardRect.height > window.innerHeight + window.scrollY - 8) {
+        top = rect.top + window.scrollY - cardRect.height - 8;
+    }
+    card.style.left = left + 'px';
+    card.style.top = top + 'px';
+}
+
+function bindUserCardHover(target, me) {
+    if (!target) return;
+    const open = () => {
+        if (_userCardHideTimer) { clearTimeout(_userCardHideTimer); _userCardHideTimer = null; }
+        _showUserCard(target, me);
+    };
+    target.addEventListener('mouseenter', open);
+    target.addEventListener('focus', open);
+    target.addEventListener('mouseleave', _scheduleHideUserCard);
+    target.addEventListener('blur', _scheduleHideUserCard);
 }
 
 function escapeHtml(s) {

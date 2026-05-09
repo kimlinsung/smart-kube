@@ -112,7 +112,10 @@ def current_user():
         return None
     with db.cursor() as cur:
         cur.execute(
-            "SELECT id, username, role, name, email, avatar_url, feishu_open_id "
+            "SELECT id, username, role, created_at, "
+            "name, en_name, email, enterprise_email, mobile, "
+            "avatar_url, avatar_big, "
+            "feishu_open_id, feishu_union_id, tenant_key "
             "FROM users WHERE id=?",
             (uid,),
         )
@@ -129,11 +132,16 @@ def upsert_feishu_user(info: dict) -> dict:
       - email / enterprise_email / mobile
       - avatar_url
     """
-    open_id  = (info.get("open_id")  or "").strip()
-    union_id = (info.get("union_id") or "").strip()
-    name     = (info.get("name") or info.get("en_name") or "").strip()
-    email    = (info.get("email") or info.get("enterprise_email") or "").strip()
-    avatar   = (info.get("avatar_url") or "").strip()
+    open_id   = (info.get("open_id")   or "").strip()
+    union_id  = (info.get("union_id")  or "").strip()
+    name      = (info.get("name")      or info.get("en_name") or "").strip()
+    en_name   = (info.get("en_name")   or "").strip()
+    email     = (info.get("email")     or info.get("enterprise_email") or "").strip()
+    ent_email = (info.get("enterprise_email") or "").strip()
+    mobile    = (info.get("mobile")    or "").strip()
+    avatar    = (info.get("avatar_url") or "").strip()
+    avatar_big = (info.get("avatar_big") or info.get("avatar_middle") or avatar).strip()
+    tenant    = (info.get("tenant_key") or "").strip()
     if not open_id:
         raise ValueError("飞书返回的用户信息里缺少 open_id")
 
@@ -147,8 +155,11 @@ def upsert_feishu_user(info: dict) -> dict:
         row = cur.fetchone()
         if row:
             cur.execute(
-                "UPDATE users SET feishu_union_id=?, name=?, email=?, avatar_url=? WHERE id=?",
-                (union_id, name, email, avatar, row["id"]),
+                "UPDATE users SET feishu_union_id=?, name=?, en_name=?, "
+                "email=?, enterprise_email=?, mobile=?, "
+                "avatar_url=?, avatar_big=?, tenant_key=? WHERE id=?",
+                (union_id, name, en_name, email, ent_email, mobile,
+                 avatar, avatar_big, tenant, row["id"]),
             )
             cur.execute("SELECT * FROM users WHERE id=?", (row["id"],))
             return dict(cur.fetchone())
@@ -168,10 +179,14 @@ def upsert_feishu_user(info: dict) -> dict:
         placeholder_pwd = generate_password_hash("!feishu-no-password!" + open_id)
         cur.execute(
             "INSERT INTO users(username, password_hash, role, created_at, "
-            "feishu_open_id, feishu_union_id, name, email, avatar_url) "
-            "VALUES(?,?,?,?,?,?,?,?,?)",
+            "feishu_open_id, feishu_union_id, tenant_key, "
+            "name, en_name, email, enterprise_email, mobile, "
+            "avatar_url, avatar_big) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (username, placeholder_pwd, default_role, int(time.time()),
-             open_id, union_id, name, email, avatar),
+             open_id, union_id, tenant,
+             name, en_name, email, ent_email, mobile,
+             avatar, avatar_big),
         )
         cur.execute("SELECT * FROM users WHERE feishu_open_id=?", (open_id,))
         return dict(cur.fetchone())
