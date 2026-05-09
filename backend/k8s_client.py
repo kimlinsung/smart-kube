@@ -16,6 +16,7 @@ import io
 import logging
 import os
 import random
+import re
 import tarfile
 import time
 from typing import Iterable, Optional
@@ -211,10 +212,25 @@ def _resolve_image(arch: Optional[str], image: Optional[str]) -> str:
     return ARCH_IMAGES.get("amd64") or "ubuntu:22.04"
 
 
-def _make_pod_name(prefix: str, owner: str) -> str:
+_DNS1123_RE = re.compile(r"[^a-z0-9-]+")
+
+
+def _sanitize_dns1123(s: str, fallback: str = "u") -> str:
+    """把任意字符串压成合法的 RFC 1123 子域片段：仅保留小写字母、数字、'-'。
+
+    非 ASCII（如中文用户名）会被剥掉；空串回退到 fallback。
+    """
+    s = (s or "").lower().replace("_", "-")
+    s = _DNS1123_RE.sub("-", s)
+    s = re.sub(r"-+", "-", s).strip("-")
+    return s or fallback
+
+
+def _make_pod_name(prefix: str, owner: str, owner_id: Optional[int] = None) -> str:
     rnd = "{:04x}".format(random.randint(0, 0xFFFF))
-    base = f"{prefix}-{owner.lower()}-{int(time.time()) % 100000}-{rnd}"
-    return base.replace("_", "-")[:50]
+    safe_owner = _sanitize_dns1123(owner, fallback=f"u{owner_id}" if owner_id else "u")
+    base = f"{prefix}-{safe_owner}-{int(time.time()) % 100000}-{rnd}"
+    return base.strip("-")[:50].strip("-")
 
 
 def _allocate_ssh_port(pod_name: str, user_id: int) -> int:
@@ -302,7 +318,7 @@ def create_ssh_pod(
     else:
         image_resolved = _resolve_image(arch_canonical or node["arch"], image)
     owner_label = str(user["id"])
-    pod_name = _make_pod_name(name_prefix, user["username"])
+    pod_name = _make_pod_name(name_prefix, user["username"], owner_id=user["id"])
     root_pwd = SSH_CONF.get("default_root_password", "smartkube")
     nodeport = _allocate_ssh_port(pod_name, user["id"])
 
@@ -805,7 +821,7 @@ def run_python_oneshot(
     node = find_node_by_arch_or_hostname(arch=arch_canonical, hostname=hostname, node_type=node_type)
     if not node:
         raise RuntimeError("未找到可用节点用于 Python 执行")
-    name = _make_pod_name("pyexec", user["username"])
+    name = _make_pod_name("pyexec", user["username"], owner_id=user["id"])
 
     # 让容器先睡眠等待我们 cp 文件后 exec 触发执行
     container = client.V1Container(
