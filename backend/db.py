@@ -95,6 +95,24 @@ def init_db():
         if "experiment_id" not in cols:
             cur.execute("ALTER TABLE chat_history ADD COLUMN experiment_id INTEGER")
 
+        # 老库升级：users 表补飞书绑定字段
+        cur.execute("PRAGMA table_info(users)")
+        ucols = {r["name"] for r in cur.fetchall()}
+        for col, ddl in [
+            ("feishu_open_id",  "ALTER TABLE users ADD COLUMN feishu_open_id TEXT"),
+            ("feishu_union_id", "ALTER TABLE users ADD COLUMN feishu_union_id TEXT"),
+            ("name",            "ALTER TABLE users ADD COLUMN name TEXT"),
+            ("email",           "ALTER TABLE users ADD COLUMN email TEXT"),
+            ("avatar_url",      "ALTER TABLE users ADD COLUMN avatar_url TEXT"),
+        ]:
+            if col not in ucols:
+                cur.execute(ddl)
+        # 给 feishu_open_id 加唯一索引（NULL 不冲突，老用户不影响）
+        cur.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_feishu_open_id "
+            "ON users(feishu_open_id) WHERE feishu_open_id IS NOT NULL"
+        )
+
 
 def log_audit(user_id, username, action, detail=""):
     with cursor() as cur:

@@ -13,7 +13,7 @@ def generate_password_hash(password: str) -> str:
     return _gph(password, method="pbkdf2:sha256")
 
 from . import db
-from .config import ADMIN_CONF
+from .config import ADMIN_CONF, FEISHU_CONF
 
 
 def ensure_admin():
@@ -71,6 +71,29 @@ def delete_user(user_id):
         cur.execute("DELETE FROM users WHERE id=? AND role!='admin'", (user_id,))
 
 
+def set_role(user_id: int, role: str) -> Optional[str]:
+    """更新指定用户的角色（user / admin）。返回错误字符串或 None（成功）。
+
+    最后一个管理员不允许被降级，避免把自己锁在外面。
+    """
+    if role not in ("user", "admin"):
+        return "角色必须是 user 或 admin"
+    with db.cursor() as cur:
+        cur.execute("SELECT role FROM users WHERE id=?", (user_id,))
+        row = cur.fetchone()
+        if not row:
+            return "用户不存在"
+        current = row["role"]
+        if current == role:
+            return None
+        if current == "admin" and role == "user":
+            cur.execute("SELECT COUNT(*) AS c FROM users WHERE role='admin'")
+            if cur.fetchone()["c"] <= 1:
+                return "至少需要保留一个管理员"
+        cur.execute("UPDATE users SET role=? WHERE id=?", (role, user_id))
+    return None
+
+
 def authenticate(username, password):
     with db.cursor() as cur:
         cur.execute("SELECT * FROM users WHERE username=?", (username,))
@@ -88,9 +111,70 @@ def current_user():
     if not uid:
         return None
     with db.cursor() as cur:
-        cur.execute("SELECT id, username, role FROM users WHERE id=?", (uid,))
+        cur.execute(
+            "SELECT id, username, role, name, email, avatar_url, feishu_open_id "
+            "FROM users WHERE id=?",
+            (uid,),
+        )
         row = cur.fetchone()
     return dict(row) if row else None
+
+
+def upsert_feishu_user(info: dict) -> dict:
+    """飞书登录回调成功后调用：根据 open_id 找本地用户，没有则自动创建。
+
+    info 来自 feishu.fetch_user_info()，关键字段：
+      - open_id / union_id：稳定唯一标识
+      - name：中文名；en_name：英文名
+      - email / enterprise_email / mobile
+      - avatar_url
+    """
+    open_id  = (info.get("open_id")  or "").strip()
+    union_id = (info.get("union_id") or "").strip()
+    name     = (info.get("name") or info.get("en_name") or "").strip()
+    email    = (info.get("email") or info.get("enterprise_email") or "").strip()
+    avatar   = (info.get("avatar_url") or "").strip()
+    if not open_id:
+        raise ValueError("飞书返回的用户信息里缺少 open_id")
+
+    default_role = FEISHU_CONF.get("default_role", "user")
+    if default_role not in ("user", "admin"):
+        default_role = "user"
+
+    with db.cursor() as cur:
+        # 先按 open_id 查
+        cur.execute("SELECT * FROM users WHERE feishu_open_id=?", (open_id,))
+        row = cur.fetchone()
+        if row:
+            cur.execute(
+                "UPDATE users SET feishu_union_id=?, name=?, email=?, avatar_url=? WHERE id=?",
+                (union_id, name, email, avatar, row["id"]),
+            )
+            cur.execute("SELECT * FROM users WHERE id=?", (row["id"],))
+            return dict(cur.fetchone())
+
+        # 没有则创建。username 必须唯一，用「飞书姓名 + open_id 末 6 位」拼，冲突再加序号
+        base = (name or "feishu_user").replace(" ", "_") + "_" + open_id[-6:]
+        username = base
+        i = 1
+        while True:
+            cur.execute("SELECT 1 FROM users WHERE username=?", (username,))
+            if not cur.fetchone():
+                break
+            i += 1
+            username = f"{base}_{i}"
+
+        # 飞书登录用户没有本地密码，写一个不可登录的占位 hash
+        placeholder_pwd = generate_password_hash("!feishu-no-password!" + open_id)
+        cur.execute(
+            "INSERT INTO users(username, password_hash, role, created_at, "
+            "feishu_open_id, feishu_union_id, name, email, avatar_url) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (username, placeholder_pwd, default_role, int(time.time()),
+             open_id, union_id, name, email, avatar),
+        )
+        cur.execute("SELECT * FROM users WHERE feishu_open_id=?", (open_id,))
+        return dict(cur.fetchone())
 
 
 def login_required(view):

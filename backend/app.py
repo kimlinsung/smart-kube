@@ -13,7 +13,7 @@ from flask import Flask, redirect, send_from_directory, session
 from flask_cors import CORS
 from flask_sock import Sock
 
-from . import auth, db, k8s_client, routes_api, routes_shell
+from . import auth, db, k8s_client, routes_api, routes_feishu, routes_shell
 from .config import FLASK_CONF, FRONTEND_DIR
 
 
@@ -46,6 +46,8 @@ def create_app() -> Flask:
 
     # 注册 REST 路由
     app.register_blueprint(routes_api.bp)
+    # 飞书 OAuth 登录路由
+    app.register_blueprint(routes_feishu.bp)
 
     # 注册 WebSocket
     sock = Sock(app)
@@ -58,8 +60,20 @@ def create_app() -> Flask:
             return redirect("/login.html")
         return redirect("/dashboard.html")
 
+    # 不需要登录就能访问的前端页面 / 静态资源前缀（白名单）
+    _PUBLIC_FILES = {"login.html", "favicon.ico"}
+    _PUBLIC_PREFIXES = ("css/", "js/", "img/", "assets/", "fonts/")
+
     @app.route("/<path:filename>")
     def serve_static(filename):
+        # 静态资源（css/js/图片等）放行；login.html 放行
+        is_public = (
+            filename in _PUBLIC_FILES
+            or filename.startswith(_PUBLIC_PREFIXES)
+        )
+        # 其它 HTML 页面要求已登录，否则跳 login.html
+        if not is_public and filename.endswith(".html") and not session.get("user_id"):
+            return redirect(f"/login.html?next=/{filename}")
         return send_from_directory(FRONTEND_DIR, filename)
 
     return app

@@ -9,3 +9,4 @@ langchain-core>=0.3.0
 pyyaml>=6.0
 werkzeug>=3.0.0
 simple-websocket>=1.0.0
+requests>=2.31.0

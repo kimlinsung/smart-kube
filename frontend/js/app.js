@@ -17,6 +17,13 @@ function renderTopbar(me) {
     const expName = me.current_experiment_name
         ? `<span class="topbar-exp" title="当前实验">实验：<b>${escapeHtml(me.current_experiment_name)}</b></span>`
         : '';
+    // 显示名优先飞书 name，其次本地 username
+    const displayName = me.name || me.username;
+    const avatar = me.avatar_url
+        ? `<img src="${me.avatar_url}" alt="" style="width:22px;height:22px;border-radius:50%;vertical-align:middle;margin-right:6px;" />`
+        : '';
+    const feishuTag = me.feishu_open_id
+        ? `<span class="badge badge-blue" title="飞书登录">飞书</span>` : '';
     el.innerHTML = `
       <h1>智能云边端(Cloud-Edge-Device)调度系统</h1>
       <nav>
@@ -27,7 +34,8 @@ function renderTopbar(me) {
       </nav>
       <div class="user">
         ${expName}
-        ${me.username} <span class="badge ${isAdmin ? 'badge-blue' : 'badge-green'}">${isAdmin ? '管理员' : '用户'}</span>
+        ${avatar}${escapeHtml(displayName)} ${feishuTag}
+        <span class="badge ${isAdmin ? 'badge-blue' : 'badge-green'}">${isAdmin ? '管理员' : '用户'}</span>
         <button id="btnLogout">退出</button>
       </div>`;
     document.getElementById('btnLogout').onclick = async () => {

@@ -457,6 +457,21 @@ def admin_change_password(uid):
     return jsonify({"ok": True})
 
 
+@bp.put("/admin/users/<int:uid>/role")
+@auth.admin_required
+def admin_set_role(uid):
+    u = request.current_user
+    if uid == u["id"]:
+        return jsonify({"error": "不能修改自己的角色"}), 400
+    data = request.get_json(force=True) or {}
+    role = (data.get("role") or "").strip()
+    err = auth.set_role(uid, role)
+    if err:
+        return jsonify({"error": err}), 400
+    db.log_audit(u["id"], u["username"], "set_role", f"uid={uid} role={role}")
+    return jsonify({"ok": True})
+
+
 @bp.delete("/admin/users/<int:uid>")
 @auth.admin_required
 def admin_delete_user(uid):

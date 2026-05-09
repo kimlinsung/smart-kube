@@ -21,6 +21,7 @@ K8S_CONF = CONFIG.get("kubernetes", {})
 SSH_CONF = CONFIG.get("ssh", {})
 RES_CONF = CONFIG.get("resources", {})
 ARCH_IMAGES = CONFIG.get("arch_images", {})
+FEISHU_CONF = CONFIG.get("feishu", {})
 
 NAMESPACE = K8S_CONF.get("namespace", "smart-kube")
 KUBECONFIG = os.path.expanduser(K8S_CONF.get("kubeconfig_path", "") or "")

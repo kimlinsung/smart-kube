@@ -14,6 +14,19 @@ flask:
   port: 5001
   debug: false
 
+# 飞书（Lark/Feishu）OAuth2.0 网页授权登录配置
+# 在飞书开放平台「应用 → 安全设置 → 重定向URL」中必须先把 redirect_uri 加入白名单
+# （飞书允许 http://localhost:* 与 http://内网IP:* 直接加入白名单，无需公网域名）
+feishu:
+  enabled: true
+  app_id: "cli_a974609431795cc4"
+  app_secret: "CNLYuJT9eiRoVxxkCyvuhbnn2WvUJzvC"
+  # 留空则后端会用「请求来源 + /api/feishu/callback」自动拼接（推荐留空，方便多 IP 访问）
+  # 也可以写死，例如 "http://192.168.1.10:5001/api/feishu/callback"
+  redirect_uri: ""
+  # 通过飞书登录后默认在本地 users 表分配的角色（user 或 admin）
+  default_role: "user"
+
 admin:
   # 系统启动时若管理员不存在会自动创建
   username: "admin"

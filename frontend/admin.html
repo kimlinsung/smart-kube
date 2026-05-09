@@ -151,6 +151,7 @@ document.getElementById('podsBody').addEventListener('click', async e => {
     try { await API.deleteResource(name); loadAllPods(); } catch (err) { alert(err.message); }
 });
 
+let MY_ID = null;
 async function loadUsers() {
     const body = document.getElementById('usersBody');
     body.innerHTML = '<tr><td colspan="5">加载中...</td></tr>';
@@ -159,6 +160,11 @@ async function loadUsers() {
         body.innerHTML = '';
         r.users.forEach(u => {
             const tr = document.createElement('tr');
+            const isSelf = u.id === MY_ID;
+            const toggleRole = u.role === 'admin' ? 'user' : 'admin';
+            const toggleLabel = u.role === 'admin' ? '降为普通用户' : '设为管理员';
+            const roleBtn = isSelf ? ''
+                : `<button data-act="role" data-id="${u.id}" data-name="${u.username}" data-role="${toggleRole}">${toggleLabel}</button>`;
             tr.innerHTML = `
                 <td>${u.id}</td>
                 <td>${u.username}</td>
@@ -166,6 +172,7 @@ async function loadUsers() {
                 <td>${fmtTime(u.created_at)}</td>
                 <td class="row-actions">
                     <button data-act="pwd" data-id="${u.id}" data-name="${u.username}">重置密码</button>
+                    ${roleBtn}
                     ${u.role==='admin' ? '' : `<button class="danger" data-act="del" data-id="${u.id}">删除</button>`}
                 </td>`;
             body.appendChild(tr);
@@ -176,7 +183,7 @@ async function loadUsers() {
 }
 document.getElementById('usersBody').addEventListener('click', async e => {
     const btn = e.target.closest('button'); if (!btn) return;
-    const { act, id, name } = btn.dataset;
+    const { act, id, name, role } = btn.dataset;
     if (act === 'del') {
         if (!confirm(`删除用户 ${name || id}？`)) return;
         try { await API.adminDeleteUser(id); loadUsers(); } catch (err) { alert(err.message); }
@@ -185,6 +192,10 @@ document.getElementById('usersBody').addEventListener('click', async e => {
         if (newPwd === null) return;  // 点了取消
         if (newPwd.length < 6) { alert('密码长度不能少于 6 位'); return; }
         try { await API.adminChangePassword(id, newPwd); alert('密码已修改'); } catch (err) { alert(err.message); }
+    } else if (act === 'role') {
+        const tip = role === 'admin' ? `将用户 "${name}" 设为管理员？` : `将管理员 "${name}" 降为普通用户？`;
+        if (!confirm(tip)) return;
+        try { await API.adminSetUserRole(id, role); loadUsers(); } catch (err) { alert(err.message); }
     }
 });
 document.getElementById('createUser').onclick = async () => {
@@ -205,6 +216,7 @@ document.getElementById('refreshNodes').onclick = loadNodes;
 (async () => {
     const me = await loadMe();
     if (me.role !== 'admin') { alert('需要管理员权限'); window.location.href = '/dashboard.html'; return; }
+    MY_ID = me.id;
     loadNodes(); loadAllPods(); loadUsers();
     setInterval(loadAllPods, 15000);
 })();

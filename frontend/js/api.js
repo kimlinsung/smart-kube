@@ -69,6 +69,7 @@ const API = {
     adminUsers() { return this.get('/api/admin/users'); },
     adminCreateUser(u, p, role) { return this.post('/api/admin/users', { username: u, password: p, role }); },
     adminChangePassword(id, password) { return this.request('PUT', `/api/admin/users/${id}/password`, { password }); },
+    adminSetUserRole(id, role) { return this.request('PUT', `/api/admin/users/${id}/role`, { role }); },
     adminDeleteUser(id) { return this.del('/api/admin/users/' + id); },
 
     listExperiments() { return this.get('/api/experiments'); },
