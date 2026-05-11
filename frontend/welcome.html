@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>云边端多智能体实验床 · Cloud-Edge-IoT Multi-Agent Testbed</title>
+<title data-i18n="welcome.title">Cloud-Edge-IoT Multi-Agent Testbed</title>
 <link rel="stylesheet" href="/css/style.css" />
 <style>
   body {
@@ -35,13 +35,12 @@
     background: #1f3a8a;
     border: 2px solid #1f3a8a;
     position: relative;
+    flex-shrink: 0;
   }
   .pub-brand-mark::after {
     content: ""; position: absolute; inset: 4px;
     border: 1.5px solid #ffffff;
   }
-  .pub-brand .en { color: #6b7280; font-weight: 400; }
-  .pub-brand .sep { color: #d1d5db; font-weight: 400; }
 
   .pub-nav { display: flex; gap: 4px; align-items: center; }
   .pub-nav a {
@@ -58,6 +57,26 @@
     font-weight: 500;
   }
   .pub-nav a.cta:hover { background: #15306f; border-color: #15306f; color: #fff; }
+
+  /* 语言切换 */
+  .lang-switch {
+    display: inline-flex; align-items: center;
+    margin-left: 6px;
+    border: 1px solid #e5e7eb;
+    font-size: 12px;
+    overflow: hidden;
+  }
+  .lang-switch a {
+    color: #6b7280; text-decoration: none;
+    padding: 5px 10px;
+    border-left: 1px solid #e5e7eb;
+    line-height: 1.1;
+  }
+  .lang-switch a:first-child { border-left: 0; }
+  .lang-switch a.active {
+    color: #ffffff; background: #1f3a8a; font-weight: 600;
+  }
+  .lang-switch a:not(.active):hover { color: #111827; background: #f3f4f6; }
 
   /* ---- Hero ---- */
   .hero {
@@ -145,7 +164,6 @@
     max-width: 1280px; margin: 0 auto;
     padding: 0 40px 40px;
     display: grid; grid-template-columns: repeat(4, 1fr); gap: 0;
-    border-left: 1px solid #e5e7eb;
   }
   .metric {
     background: #ffffff;
@@ -153,6 +171,7 @@
     border-left: 0;
     padding: 18px 22px;
   }
+  .metrics .metric:first-child { border-left: 1px solid #e5e7eb; }
   .metric .v {
     font-size: 26px; font-weight: 700; color: #0f172a;
     letter-spacing: -.3px;
@@ -162,10 +181,6 @@
     margin-top: 4px;
     font-size: 12px; color: #6b7280; letter-spacing: .2px;
   }
-  .metric .l .accent { color: #9ca3af; }
-
-  /* 修正：metrics 容器自身不需要 border-left，要 reset */
-  .metrics { border-left: 0; }
 
   /* ---- 介绍区块 ---- */
   .section {
@@ -298,34 +313,35 @@
 <header class="pub-top">
   <a class="pub-brand" href="/welcome.html">
     <span class="pub-brand-mark"></span>
-    <span>云边端多智能体实验床 <span class="sep">·</span> <span class="en">Cloud-Edge-IoT Testbed</span></span>
+    <span data-i18n="brand">Cloud-Edge-IoT Multi-Agent Testbed</span>
   </a>
   <nav class="pub-nav">
-    <a href="/welcome.html">概览</a>
-    <a href="/devices.html">设备状态</a>
-    <a href="/login.html" class="cta">登录控制台</a>
+    <a href="/welcome.html" data-i18n="nav.overview">Overview</a>
+    <a href="/devices.html" data-i18n="nav.devices">Devices</a>
+    <a href="/login.html" class="cta" data-i18n="nav.login">Sign In</a>
+    <span class="lang-switch">
+      <a href="#" data-set-lang="en">EN</a>
+      <a href="#" data-set-lang="zh">中</a>
+    </span>
   </nav>
 </header>
 
 <section class="hero">
   <div>
-    <span class="hero-tag"><span class="dot"></span>实验床在线 · 持续运行中</span>
+    <span class="hero-tag"><span class="dot"></span><span data-i18n="welcome.hero.tag">Testbed Online · Continuously Running</span></span>
     <h1>
-      面向多智能体协同的<br/>云-边-端一体化实验床
-      <span class="sub-en">A Heterogeneous Cloud-Edge-IoT Testbed for Multi-Agent Research</span>
+      <span data-i18n-html="welcome.hero.title">A Cloud-Edge-IoT Testbed<br/>for Multi-Agent Research</span>
+      <span class="sub-en" data-i18n="welcome.hero.subtitle">Heterogeneous Cloud-Edge-IoT Infrastructure for Multi-Agent Systems</span>
     </h1>
-    <p class="lead">
-      面向智能体系统、协同推理、边缘 AI 与具身智能等前沿方向，本实验床
-      在统一的调度面下，汇聚 x86、ARM64、RISC-V 等多指令集架构的异构算力，
-      覆盖云端高性能 GPU 服务器、边缘 AI 加速节点与端侧机器人 / MCU / IoT 设备，
-      为可复现的多智能体实验提供端到端环境。
+    <p class="lead" data-i18n="welcome.hero.lead">
+      Targeting frontiers including multi-agent systems, collaborative inference, edge AI and embodied intelligence, this testbed unifies heterogeneous compute across x86, ARM64 and RISC-V instruction set architectures under a single scheduling plane. It covers cloud-side HPC GPU servers, edge-side AI accelerators and device-side robots / MCUs / IoT hardware, providing an end-to-end environment for reproducible multi-agent experiments.
     </p>
     <div class="hero-actions">
       <a class="btn-hero primary" href="/devices.html">
-        查看设备状态
+        <span data-i18n="welcome.btn.view_devices">View Device Status</span>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
       </a>
-      <a class="btn-hero ghost" href="/login.html">登录控制台</a>
+      <a class="btn-hero ghost" href="/login.html" data-i18n="welcome.btn.login">Sign in to Console</a>
     </div>
   </div>
 
@@ -333,101 +349,108 @@
     <div class="topo-row cloud">
       <span class="topo-label">CLOUD</span>
       <div class="topo-nodes">
-        <div class="topo-node"><span class="n" data-metric="cloud_servers">·</span><span>HPC / GPU 服务器</span></div>
-        <div class="topo-node"><span class="n">x86_64</span><span>指令集</span></div>
+        <div class="topo-node"><span class="n" data-metric="cloud_servers">·</span><span data-i18n="welcome.topo.cloud.servers">HPC / GPU Servers</span></div>
+        <div class="topo-node"><span class="n">x86_64</span><span data-i18n="welcome.topo.cloud.isa">Instruction Set</span></div>
       </div>
     </div>
     <div class="topo-row edge">
       <span class="topo-label">EDGE</span>
       <div class="topo-nodes">
-        <div class="topo-node"><span class="n" data-metric="edge_nodes">·</span><span>边缘节点</span></div>
-        <div class="topo-node"><span class="n">ARM64</span><span>+ RISC-V</span></div>
+        <div class="topo-node"><span class="n" data-metric="edge_nodes">·</span><span data-i18n="welcome.topo.edge.nodes">Edge Nodes</span></div>
+        <div class="topo-node"><span class="n">ARM64</span><span data-i18n="welcome.topo.edge.isa">+ RISC-V</span></div>
       </div>
     </div>
     <div class="topo-row iot">
       <span class="topo-label">IoT</span>
       <div class="topo-nodes">
-        <div class="topo-node"><span class="n" data-metric="iot_devices">·</span><span>端侧设备</span></div>
-        <div class="topo-node"><span class="n">机器人</span><span>MCU / 传感器</span></div>
+        <div class="topo-node"><span class="n" data-metric="iot_devices">·</span><span data-i18n="welcome.topo.iot.devices">IoT Devices</span></div>
+        <div class="topo-node"><span class="n" data-i18n="welcome.topo.iot.robot">Robotics</span><span data-i18n="welcome.topo.iot.mcu">MCU / Sensors</span></div>
       </div>
     </div>
   </div>
 </section>
 
 <section class="metrics" id="metrics">
-  <div class="metric"><div class="v" id="m-total">—</div><div class="l">设备总数 <span class="accent">Total Devices</span></div></div>
-  <div class="metric"><div class="v" id="m-cloud">—</div><div class="l">云端节点 <span class="accent">Cloud</span></div></div>
-  <div class="metric"><div class="v" id="m-edge">—</div><div class="l">边缘节点 <span class="accent">Edge</span></div></div>
-  <div class="metric"><div class="v" id="m-iot">—</div><div class="l">端侧设备 <span class="accent">IoT</span></div></div>
+  <div class="metric"><div class="v" id="m-total">—</div><div class="l" data-i18n="welcome.metric.total">Total Devices</div></div>
+  <div class="metric"><div class="v" id="m-cloud">—</div><div class="l" data-i18n="welcome.metric.cloud">Cloud Nodes</div></div>
+  <div class="metric"><div class="v" id="m-edge">—</div><div class="l" data-i18n="welcome.metric.edge">Edge Nodes</div></div>
+  <div class="metric"><div class="v" id="m-iot">—</div><div class="l" data-i18n="welcome.metric.iot">IoT Devices</div></div>
 </section>
 
 <section class="section">
-  <div class="section-title">Capabilities</div>
-  <h2 class="section-heading">为多智能体研究而生的统一实验环境</h2>
-  <p class="section-sub">
-    实验床以容器化的方式将异构算力抽象为统一的可调度单元，研究者可在浏览器内创建跨云-边-端的实验组合，
-    一键拉起、SSH 接入、上传脚本并通过对话式智能体编排实验。
+  <div class="section-title" data-i18n="welcome.section.cap">CAPABILITIES</div>
+  <h2 class="section-heading" data-i18n="welcome.section.cap.heading">A unified experimental environment built for multi-agent research</h2>
+  <p class="section-sub" data-i18n="welcome.section.cap.sub">
+    The testbed exposes heterogeneous hardware as containerised, schedulable units. Researchers can compose experiments across cloud, edge and device tiers, launch them with a single click, attach via in-browser SSH, upload scripts and orchestrate runs through a conversational agent.
   </p>
 
   <div class="features">
     <div class="feature">
       <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 12l9 4 9-4"/><path d="M3 17l9 4 9-4"/></svg></div>
-      <h3>异构算力统一调度</h3>
-      <p>基于的统一调度面，跨 x86、ARM64、RISC-V 多种指令集架构编排实验单元，支持 GPU / NPU 加速节点的细粒度分配。</p>
+      <h3 data-i18n="welcome.feature.1.title">Unified scheduling for heterogeneous compute</h3>
+      <p data-i18n="welcome.feature.1.desc">A unified scheduling plane orchestrates experiment units across x86, ARM64 and RISC-V instruction sets, with fine-grained allocation of GPU / NPU accelerators.</p>
     </div>
     <div class="feature">
       <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg></div>
-      <h3>多智能体协同实验</h3>
-      <p>原生支持多智能体（Multi-Agent）编排，可跨云-边-端节点部署协同任务，验证分布式推理、联邦学习、群体智能等典型范式。</p>
+      <h3 data-i18n="welcome.feature.2.title">Multi-agent collaborative experiments</h3>
+      <p data-i18n="welcome.feature.2.desc">First-class support for multi-agent orchestration. Deploy collaborative workloads across cloud-edge-device tiers and validate distributed inference, federated learning and swarm-intelligence paradigms.</p>
     </div>
     <div class="feature">
       <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="14" rx="0"/><path d="M8 20h8M12 18v2"/><path d="M7 9h10M7 13h6"/></svg></div>
-      <h3>浏览器内 Web Shell</h3>
-      <p>无需本地配置，直接在浏览器中获得每个实验单元的交互式 SSH 终端，配合文件上传与日志审计，研究过程开箱即用。</p>
+      <h3 data-i18n="welcome.feature.3.title">In-browser Web Shell</h3>
+      <p data-i18n="welcome.feature.3.desc">No local setup required — open an interactive SSH terminal for any experiment unit directly in the browser, with file upload and audited operations out of the box.</p>
     </div>
     <div class="feature">
       <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a4 4 0 0 1-4 4H7l-4 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg></div>
-      <h3>对话式实验编排</h3>
-      <p>内置面向运维与实验编排的对话智能体，自然语言驱动资源申请、镜像选择、实验拓扑构建与日志巡检。</p>
+      <h3 data-i18n="welcome.feature.4.title">Conversational experiment orchestration</h3>
+      <p data-i18n="welcome.feature.4.desc">A built-in agent for operations and experiment orchestration. Drive resource requests, image selection, topology composition and log inspection through natural language.</p>
     </div>
     <div class="feature">
       <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L3 7v6c0 5 4 8 9 9 5-1 9-4 9-9V7l-9-5z"/></svg></div>
-      <h3>多租户隔离与审计</h3>
-      <p>账号体系与实验维度的资源隔离，操作全程审计；管理员可对节点 cordon / uncordon、对用户授权与配额进行精细管控。</p>
+      <h3 data-i18n="welcome.feature.5.title">Multi-tenant isolation and auditing</h3>
+      <p data-i18n="welcome.feature.5.desc">Per-account and per-experiment isolation with full operation auditing. Administrators can cordon / uncordon nodes and manage user authorisation and quotas at a fine granularity.</p>
     </div>
     <div class="feature">
       <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v6H4zM4 14h16v6H4z"/><circle cx="7" cy="7" r="1" fill="currentColor"/><circle cx="7" cy="17" r="1" fill="currentColor"/></svg></div>
-      <h3>具身智能与 IoT 实景</h3>
-      <p>覆盖 ROS 移动机器人、深度相机、MCU 传感器与智能家居设备等真实端侧硬件，支持具身智能与边-端协同闭环实验。</p>
+      <h3 data-i18n="welcome.feature.6.title">Embodied intelligence &amp; IoT in the loop</h3>
+      <p data-i18n="welcome.feature.6.desc">Covers ROS mobile robots, depth cameras, MCU sensors and smart-home devices — real device-side hardware for closed-loop embodied and edge-device collaborative experiments.</p>
     </div>
   </div>
 </section>
 
 <section class="section">
-  <div class="section-title">Architecture</div>
-  <h2 class="section-heading">三层分级 · 一体化算力栈</h2>
-  <p class="section-sub">
-    实验床按典型云-边-端三层结构组织算力资源，各层在指令集、能耗、时延与功能定位上互补，
-    可灵活组合形成真实的协同实验拓扑。
+  <div class="section-title" data-i18n="welcome.section.arch">ARCHITECTURE</div>
+  <h2 class="section-heading" data-i18n="welcome.section.arch.heading">A three-tier, integrated compute stack</h2>
+  <p class="section-sub" data-i18n="welcome.section.arch.sub">
+    Resources are organised along the canonical cloud-edge-device hierarchy. Each tier complements the others in instruction set, power envelope, latency and functional role, and can be flexibly composed into realistic collaborative topologies.
   </p>
   <div class="layers">
     <div class="layer cloud">
-      <span class="tag">CLOUD · 云</span>
-      <h4>高性能训练与推理</h4>
-      <p>x86_64 架构的 HPC GPU 服务器集群，承载大模型训练、批量推理与控制面服务，提供稳定的中心算力底座。</p>
-      <div class="stat-line"><span>节点 <b id="m-cloud-2">—</b></span><span>ISA · x86_64</span></div>
+      <span class="tag" data-i18n="welcome.layer.cloud.tag">CLOUD</span>
+      <h4 data-i18n="welcome.layer.cloud.title">High-performance training &amp; inference</h4>
+      <p data-i18n="welcome.layer.cloud.desc">A cluster of x86_64 HPC GPU servers that hosts large-model training, batch inference and control-plane services, providing a stable central compute foundation.</p>
+      <div class="stat-line">
+        <span><span data-i18n="welcome.layer.cloud.nodes">Nodes</span> <b id="m-cloud-2">—</b></span>
+        <span data-i18n="welcome.layer.cloud.isa">ISA · x86_64</span>
+      </div>
     </div>
     <div class="layer edge">
-      <span class="tag">EDGE · 边</span>
-      <h4>低时延加速节点</h4>
-      <p>NVIDIA Jetson 系列与 RISC-V SBC 共同构成的多架构边缘层，覆盖 ARM64 与 RISC-V 64 指令集，承担近场推理与协同任务。</p>
-      <div class="stat-line"><span>节点 <b id="m-edge-2">—</b></span><span>ISA · ARM64 / RISC-V</span></div>
+      <span class="tag" data-i18n="welcome.layer.edge.tag">EDGE</span>
+      <h4 data-i18n="welcome.layer.edge.title">Low-latency accelerator nodes</h4>
+      <p data-i18n="welcome.layer.edge.desc">A multi-architecture edge tier combining NVIDIA Jetson family devices and RISC-V SBCs, spanning ARM64 and RISC-V 64 instruction sets, dedicated to near-field inference and collaborative tasks.</p>
+      <div class="stat-line">
+        <span><span data-i18n="welcome.layer.edge.nodes">Nodes</span> <b id="m-edge-2">—</b></span>
+        <span data-i18n="welcome.layer.edge.isa">ISA · ARM64 / RISC-V</span>
+      </div>
     </div>
     <div class="layer iot">
-      <span class="tag">IoT · 端</span>
-      <h4>具身智能与传感末端</h4>
-      <p>移动机器人、四足机器人、深度相机、MCU 与智能家居设备，覆盖 ARM、AVR、MSP430 等微体系结构，构成真实的端侧实验环境。</p>
-      <div class="stat-line"><span>设备 <b id="m-iot-2">—</b></span><span>机器人 / MCU / 传感器</span></div>
+      <span class="tag" data-i18n="welcome.layer.iot.tag">IoT</span>
+      <h4 data-i18n="welcome.layer.iot.title">Embodied intelligence &amp; sensing endpoints</h4>
+      <p data-i18n="welcome.layer.iot.desc">Mobile and quadruped robots, depth cameras, MCUs and smart-home devices covering ARM, AVR and MSP430 micro-architectures — a realistic device-side experimentation environment.</p>
+      <div class="stat-line">
+        <span><span data-i18n="welcome.layer.iot.devices">Devices</span> <b id="m-iot-2">—</b></span>
+        <span data-i18n="welcome.layer.iot.kind">Robotics / MCU / Sensors</span>
+      </div>
     </div>
   </div>
 </section>
@@ -435,13 +458,13 @@
 <section class="section">
   <div class="cta-band">
     <div>
-      <h3>开启你的多智能体实验</h3>
-      <p>查看可用设备的实时状态，或登录控制台创建专属实验组合。</p>
+      <h3 data-i18n="welcome.cta.title">Start your multi-agent experiment</h3>
+      <p data-i18n="welcome.cta.desc">Check the live status of available devices, or sign in to the console to compose your own experiment.</p>
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;">
-      <a class="btn-hero ghost" href="/devices.html">设备状态总览</a>
+      <a class="btn-hero ghost" href="/devices.html" data-i18n="welcome.cta.btn.devices">Device Status Overview</a>
       <a class="btn-hero primary" href="/login.html">
-        进入登录页
+        <span data-i18n="welcome.cta.btn.login">Go to Sign-in Page</span>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
       </a>
     </div>
@@ -449,10 +472,11 @@
 </section>
 
 <footer class="pub-foot">
-  <div>© Cloud-Edge-IoT Multi-Agent Testbed · 仅用于科研与教学用途</div>
-  <div>账号开通请联系 <a href="mailto:cppcan@163.com">cppcan@163.com</a></div>
+  <div data-i18n="foot.copy">© Cloud-Edge-IoT Multi-Agent Testbed · For research and educational use only</div>
+  <div><span data-i18n="foot.account">Account requests:</span> <a href="mailto:cppcan@163.com">cppcan@163.com</a></div>
 </footer>
 
+<script src="/js/i18n.js"></script>
 <script>
 (async function loadMetrics() {
   try {

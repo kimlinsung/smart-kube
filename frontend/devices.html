@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>设备状态 · 云边端多智能体实验床</title>
+<title data-i18n="devices.title">Device Status · Cloud-Edge-IoT Multi-Agent Testbed</title>
 <link rel="stylesheet" href="/css/style.css" />
 <style>
   body {
@@ -34,13 +34,12 @@
     background: #1f3a8a;
     border: 2px solid #1f3a8a;
     position: relative;
+    flex-shrink: 0;
   }
   .pub-brand-mark::after {
     content: ""; position: absolute; inset: 4px;
     border: 1.5px solid #ffffff;
   }
-  .pub-brand .en { color: #6b7280; font-weight: 400; }
-  .pub-brand .sep { color: #d1d5db; font-weight: 400; }
 
   .pub-nav { display: flex; gap: 4px; align-items: center; }
   .pub-nav a {
@@ -62,6 +61,23 @@
     font-weight: 500;
   }
   .pub-nav a.cta:hover { background: #15306f; border-color: #15306f; color: #fff; }
+
+  .lang-switch {
+    display: inline-flex; align-items: center;
+    margin-left: 6px;
+    border: 1px solid #e5e7eb;
+    font-size: 12px;
+    overflow: hidden;
+  }
+  .lang-switch a {
+    color: #6b7280; text-decoration: none;
+    padding: 5px 10px;
+    border-left: 1px solid #e5e7eb;
+    line-height: 1.1;
+  }
+  .lang-switch a:first-child { border-left: 0; }
+  .lang-switch a.active { color: #ffffff; background: #1f3a8a; font-weight: 600; }
+  .lang-switch a:not(.active):hover { color: #111827; background: #f3f4f6; }
 
   /* ---- 页头 ---- */
   .page-head {
@@ -98,11 +114,12 @@
   }
   .summary .sum-card:first-child { margin-left: 0; }
   .sum-card .dot {
-    width: 32px; height: 32px;
+    width: 36px; height: 32px;
     display: inline-flex; align-items: center; justify-content: center;
-    color: #ffffff; font-size: 13px; font-weight: 700;
+    color: #ffffff; font-size: 12px; font-weight: 700;
     flex-shrink: 0;
-    letter-spacing: .3px;
+    letter-spacing: .2px;
+    padding: 0 4px;
   }
   .sum-card.total .dot { background: #1f3a8a; }
   .sum-card.cloud .dot { background: #2563eb; }
@@ -179,7 +196,6 @@
     border: 1px solid #e5e7eb;
   }
 
-  /* 分类徽标 */
   .cat-pill {
     display: inline-flex; align-items: center; gap: 6px;
     padding: 2px 10px;
@@ -195,11 +211,9 @@
     background: currentColor;
   }
 
-  /* GPU 标记 */
   .gpu-yes { color: #047857; font-weight: 600; }
   .gpu-no  { color: #9ca3af; }
 
-  /* 在线状态徽标 */
   .status-pill {
     display: inline-flex; align-items: center; gap: 7px;
     padding: 2px 11px;
@@ -208,22 +222,16 @@
     border: 1px solid transparent;
   }
   .status-pill.online {
-    color: #065f46;
-    background: #ecfdf5;
-    border-color: #a7f3d0;
+    color: #065f46; background: #ecfdf5; border-color: #a7f3d0;
   }
   .status-pill.online::before {
-    content: ""; width: 6px; height: 6px;
-    background: #059669;
+    content: ""; width: 6px; height: 6px; background: #059669;
   }
   .status-pill.na {
-    color: #4b5563;
-    background: #f3f4f6;
-    border-color: #e5e7eb;
+    color: #4b5563; background: #f3f4f6; border-color: #e5e7eb;
   }
   .status-pill.na::before {
-    content: ""; width: 6px; height: 6px;
-    background: #9ca3af;
+    content: ""; width: 6px; height: 6px; background: #9ca3af;
   }
 
   .online-fraction { color: #0f172a; font-weight: 600; }
@@ -234,12 +242,10 @@
   }
   .err {
     margin: 12px 18px; padding: 10px 14px;
-    background: #fef2f2;
-    border: 1px solid #fecaca;
+    background: #fef2f2; border: 1px solid #fecaca;
     color: #991b1b; font-size: 13px;
   }
 
-  /* 注释行 */
   .note {
     max-width: 1280px; margin: 16px auto 0;
     padding: 11px 14px;
@@ -253,7 +259,6 @@
   .note svg { color: #1f3a8a; flex-shrink: 0; margin-top: 1px; }
   .note-wrap { max-width: 1280px; margin: 0 auto; padding: 0 40px; }
 
-  /* 页脚 */
   .pub-foot {
     max-width: 1280px; margin: 48px auto 0; padding: 22px 40px 32px;
     border-top: 1px solid #e5e7eb;
@@ -278,59 +283,67 @@
 <header class="pub-top">
   <a class="pub-brand" href="/welcome.html">
     <span class="pub-brand-mark"></span>
-    <span>云边端多智能体实验床 <span class="sep">·</span> <span class="en">Cloud-Edge-IoT Testbed</span></span>
+    <span data-i18n="brand">Cloud-Edge-IoT Multi-Agent Testbed</span>
   </a>
   <nav class="pub-nav">
-    <a href="/welcome.html">概览</a>
-    <a href="/devices.html" class="active">设备状态</a>
-    <a href="/login.html" class="cta">登录控制台</a>
+    <a href="/welcome.html" data-i18n="nav.overview">Overview</a>
+    <a href="/devices.html" class="active" data-i18n="nav.devices">Devices</a>
+    <a href="/login.html" class="cta" data-i18n="nav.login">Sign In</a>
+    <span class="lang-switch">
+      <a href="#" data-set-lang="en">EN</a>
+      <a href="#" data-set-lang="zh">中</a>
+    </span>
   </nav>
 </header>
 
 <div class="page-head">
-  <div class="crumb"><a href="/welcome.html">首页</a> &nbsp;/&nbsp; 设备状态</div>
-  <h1>设备状态总览</h1>
-  <p class="sub">
-    实验床当前可用的云-边-端设备清单，包括分类、机型、指令集架构、独立 GPU 配置、设备数量与在线情况。
+  <div class="crumb">
+    <a href="/welcome.html" data-i18n="devices.crumb.home">Home</a>
+    &nbsp;/&nbsp;
+    <span data-i18n="devices.crumb.current">Device Status</span>
+  </div>
+  <h1 data-i18n="devices.page.heading">Device Status Overview</h1>
+  <p class="sub" data-i18n="devices.page.sub">
+    A complete inventory of the cloud-edge-device devices currently available on the testbed, including category, model, instruction-set architecture, discrete-GPU configuration, count and online status.
   </p>
 </div>
 
 <div class="summary" id="summary">
-  <div class="sum-card total"><span class="dot">All</span><div><div class="v" id="sum-total">—</div><div class="l">设备总数</div></div></div>
-  <div class="sum-card cloud"><span class="dot">云</span><div><div class="v" id="sum-cloud">—</div><div class="l">Cloud · 云端节点</div></div></div>
-  <div class="sum-card edge"><span class="dot">边</span><div><div class="v" id="sum-edge">—</div><div class="l">Edge · 边缘节点</div></div></div>
-  <div class="sum-card iot"><span class="dot">端</span><div><div class="v" id="sum-iot">—</div><div class="l">IoT · 端侧设备</div></div></div>
+  <div class="sum-card total"><span class="dot" data-i18n="devices.sum.dot.all">All</span><div><div class="v" id="sum-total">—</div><div class="l" data-i18n="devices.sum.total">Total Devices</div></div></div>
+  <div class="sum-card cloud"><span class="dot" data-i18n="devices.sum.dot.cloud">Cld</span><div><div class="v" id="sum-cloud">—</div><div class="l" data-i18n="devices.sum.cloud">Cloud · Cloud Nodes</div></div></div>
+  <div class="sum-card edge"><span class="dot" data-i18n="devices.sum.dot.edge">Edg</span><div><div class="v" id="sum-edge">—</div><div class="l" data-i18n="devices.sum.edge">Edge · Edge Nodes</div></div></div>
+  <div class="sum-card iot"><span class="dot" data-i18n="devices.sum.dot.iot">IoT</span><div><div class="v" id="sum-iot">—</div><div class="l" data-i18n="devices.sum.iot">IoT · IoT Devices</div></div></div>
 </div>
 
 <div class="note-wrap">
   <div class="note">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
-    <span>本页面为对外展示视图，数据由公开接口返回，不直接访问集群，部分 IoT 末端设备（相机、继电器、MCU、智能家居、传感器）仅展示数量。</span>
+    <span data-i18n="devices.note">This page is a public view. Data is served by a static endpoint and never touches the cluster. Selected IoT endpoints (cameras, relays, MCUs, smart-home devices, sensors) display count only.</span>
   </div>
 </div>
 
 <div class="panel">
   <div class="panel-card">
     <div class="panel-head">
-      <div class="panel-title">设备清单 · Device Inventory</div>
-      <div class="panel-meta"><span class="live">实时 · Live</span></div>
+      <div class="panel-title" data-i18n="devices.panel.title">Device Inventory</div>
+      <div class="panel-meta"><span class="live" data-i18n="devices.panel.live">Live</span></div>
     </div>
     <div id="err" style="display:none;"></div>
     <div style="overflow-x:auto;">
       <table class="dev-table">
         <thead>
           <tr>
-            <th>分类</th>
-            <th>设备类型</th>
-            <th>指令集架构</th>
-            <th>独立 GPU</th>
-            <th class="num">数量</th>
-            <th class="num">在线数量</th>
-            <th>状态</th>
+            <th data-i18n="devices.col.category">Category</th>
+            <th data-i18n="devices.col.device">Device</th>
+            <th data-i18n="devices.col.isa">ISA</th>
+            <th data-i18n="devices.col.gpu">Discrete GPU</th>
+            <th class="num" data-i18n="devices.col.count">Count</th>
+            <th class="num" data-i18n="devices.col.online">Online</th>
+            <th data-i18n="devices.col.status">Status</th>
           </tr>
         </thead>
         <tbody id="tbody">
-          <tr><td colspan="7" class="empty">加载中…</td></tr>
+          <tr><td colspan="7" class="empty" data-i18n="devices.empty.loading">Loading…</td></tr>
         </tbody>
       </table>
     </div>
@@ -338,12 +351,13 @@
 </div>
 
 <footer class="pub-foot">
-  <div>© Cloud-Edge-IoT Multi-Agent Testbed · 仅用于科研与教学用途</div>
-  <div>账号开通请联系 <a href="mailto:cppcan@163.com">cppcan@163.com</a></div>
+  <div data-i18n="foot.copy">© Cloud-Edge-IoT Multi-Agent Testbed · For research and educational use only</div>
+  <div><span data-i18n="foot.account">Account requests:</span> <a href="mailto:cppcan@163.com">cppcan@163.com</a></div>
 </footer>
 
+<script src="/js/i18n.js"></script>
 <script>
-const CATEGORY_LABEL = { cloud: '云 · Cloud', edge: '边 · Edge', iot: '端 · IoT' };
+let LAST_DEVICES = null;
 
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({
@@ -354,19 +368,19 @@ function escapeHtml(s) {
 function renderRow(d) {
   const cat = d.category || 'iot';
   const catCls = ['cloud','edge','iot'].includes(cat) ? cat : 'iot';
-  const catLabel = CATEGORY_LABEL[catCls] || cat;
-  const gpu = d.discrete_gpu
-    ? '<span class="gpu-yes">✓ 有</span>'
-    : '<span class="gpu-no">— 无</span>';
+  const catLabel = window.I18N ? I18N.t('devices.cat.' + catCls) : catCls;
+  const gpuKey = d.discrete_gpu ? 'devices.gpu.yes' : 'devices.gpu.no';
+  const gpuCls = d.discrete_gpu ? 'gpu-yes' : 'gpu-no';
+  const gpu = `<span class="${gpuCls}">${escapeHtml(window.I18N ? I18N.t(gpuKey) : (d.discrete_gpu?'Yes':'No'))}</span>`;
   const online = d.has_online_status
     ? `<span class="online-fraction">${d.online_count}<span class="total"> / ${d.count}</span></span>`
     : '<span class="muted">—</span>';
-  const status = d.has_online_status
-    ? '<span class="status-pill online">在线 Online</span>'
-    : '<span class="status-pill na">仅计数 Count only</span>';
+  const statusKey = d.has_online_status ? 'devices.status.online' : 'devices.status.na';
+  const statusCls = d.has_online_status ? 'online' : 'na';
+  const status = `<span class="status-pill ${statusCls}">${escapeHtml(window.I18N ? I18N.t(statusKey) : statusCls)}</span>`;
   return `
     <tr>
-      <td><span class="cat-pill ${catCls}">${catLabel}</span></td>
+      <td><span class="cat-pill ${catCls}">${escapeHtml(catLabel)}</span></td>
       <td class="dev-name">${escapeHtml(d.device)}</td>
       <td><span class="isa-code">${escapeHtml(d.isa)}</span></td>
       <td>${gpu}</td>
@@ -375,6 +389,19 @@ function renderRow(d) {
       <td>${status}</td>
     </tr>
   `;
+}
+
+function renderTable() {
+  const tbody = document.getElementById('tbody');
+  const devices = LAST_DEVICES;
+  if (!Array.isArray(devices) || !devices.length) {
+    const txt = window.I18N ? I18N.t('devices.empty.none') : 'No data';
+    tbody.innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(txt)}</td></tr>`;
+    return;
+  }
+  const order = { cloud: 0, edge: 1, iot: 2 };
+  devices.sort((a, b) => (order[a.category] ?? 9) - (order[b.category] ?? 9));
+  tbody.innerHTML = devices.map(renderRow).join('');
 }
 
 (async function load() {
@@ -392,21 +419,21 @@ function renderRow(d) {
     setNum('sum-edge',  t.edge);
     setNum('sum-iot',   t.iot);
 
-    const devices = (data.devices || []);
-    if (!devices.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty">暂无设备数据</td></tr>';
-      return;
-    }
-    const order = { cloud: 0, edge: 1, iot: 2 };
-    devices.sort((a, b) => (order[a.category] ?? 9) - (order[b.category] ?? 9));
-    tbody.innerHTML = devices.map(renderRow).join('');
+    LAST_DEVICES = data.devices || [];
+    renderTable();
   } catch (e) {
     tbody.innerHTML = '';
     errBox.style.display = 'block';
     errBox.className = 'err';
-    errBox.textContent = '加载设备状态失败：' + e.message;
+    const prefix = window.I18N ? I18N.t('devices.err.load') : 'Load failed: ';
+    errBox.textContent = prefix + e.message;
   }
 })();
+
+// 切语言后重新渲染表格里那些由 JS 生成的字符串
+if (window.I18N && typeof I18N.onChange === 'function') {
+  I18N.onChange(() => { if (LAST_DEVICES) renderTable(); });
+}
 </script>
 </body>
 </html>

@@ -1,8 +1,8 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>智能云边端调度系统 · 登录</title>
+<title data-i18n="login.title">Smart Cloud-Edge-Device Scheduling · Sign In</title>
 <link rel="stylesheet" href="/css/style.css" />
 <style>
   /* 飞书登录按钮样式（不依赖外部图标库） */
@@ -57,10 +57,34 @@
       border: 1px solid rgba(255,255,255,.10);
       transition: background .15s ease, color .15s ease;
       z-index: 2;
+      text-decoration: none;
   }
   .back-home:hover {
       color: #fff; background: rgba(255,255,255,.12);
       text-decoration: none;
+  }
+
+  /* 语言切换器（深色背景版本） */
+  .lang-switch-login {
+      position: absolute; top: 20px; right: 24px;
+      display: inline-flex; align-items: center;
+      border: 1px solid rgba(255,255,255,.18);
+      font-size: 12px;
+      z-index: 2;
+      overflow: hidden;
+  }
+  .lang-switch-login a {
+      color: rgba(255,255,255,.75); text-decoration: none;
+      padding: 6px 12px;
+      border-left: 1px solid rgba(255,255,255,.18);
+      line-height: 1.1;
+  }
+  .lang-switch-login a:first-child { border-left: 0; }
+  .lang-switch-login a.active {
+      color: #1f3a8a; background: #ffffff; font-weight: 600;
+  }
+  .lang-switch-login a:not(.active):hover {
+      color: #ffffff; background: rgba(255,255,255,.10);
   }
 </style>
 </head>
@@ -68,42 +92,45 @@
 <div class="login-wrap">
     <a class="back-home" href="/welcome.html">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-        返回欢迎页
+        <span data-i18n="login.back">Back to Home</span>
     </a>
+    <span class="lang-switch-login">
+        <a href="#" data-set-lang="en">EN</a>
+        <a href="#" data-set-lang="zh">中</a>
+    </span>
     <div class="login-box">
-        <h1>智能云边端调度系统</h1>
-        <div class="subtitle">Cloud · Edge · Device · Unified Scheduling</div>
+        <h1 data-i18n="login.h1">Smart Cloud-Edge-Device Scheduling</h1>
+        <div class="subtitle" data-i18n="login.subtitle">Cloud · Edge · Device · Unified Scheduling</div>
 
         <!-- 飞书登录失败提示（从 ?feishu_err= 读取） -->
         <div id="feishuErr" class="feishu-err" hidden></div>
 
-        <label>用户名</label>
-        <input id="u" placeholder="admin" autofocus />
-        <label>密码</label>
-        <input id="p" type="password" placeholder="admin123" />
-        <button id="btnLogin">登录</button>
+        <label data-i18n="login.label.username">Username</label>
+        <input id="u" placeholder="admin" data-i18n-attr="placeholder=login.ph.username" autofocus />
+        <label data-i18n="login.label.password">Password</label>
+        <input id="p" type="password" placeholder="admin123" data-i18n-attr="placeholder=login.ph.password" />
+        <button id="btnLogin" data-i18n="login.btn">Sign In</button>
         <div class="err" id="err"></div>
 
         <!-- 飞书登录入口（仅当后端启用了飞书 OAuth 时显示） -->
-        <div class="feishu-divider" id="feishuDivider" hidden>或</div>
+        <div class="feishu-divider" id="feishuDivider" hidden><span data-i18n="login.feishu.divider">or</span></div>
         <button id="btnFeishu" class="btn-feishu" hidden>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
             <path d="M3 6.5C3 5.7 3.7 5 4.5 5h15c.8 0 1.5.7 1.5 1.5v11c0 .8-.7 1.5-1.5 1.5h-15C3.7 19 3 18.3 3 17.5v-11zm2 .5v10h14V7H5zm2 2h10v2H7V9zm0 4h7v2H7v-2z"/>
           </svg>
-          使用飞书登录
+          <span data-i18n="login.feishu.btn">Sign in with Feishu</span>
         </button>
 
         <div class="temp-acct-note">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16v12H4z"/><path d="M4 6l8 7 8-7"/></svg>
             <div>
-                <b>申请临时账号</b><br/>
-                平台账号由管理员审核创建。如需用于科研、教学或评测的<b>临时账号</b>，请发送邮件至
-                <a href="mailto:cppcan@163.com?subject=%E7%94%B3%E8%AF%B7%E4%BA%91%E8%BE%B9%E7%AB%AF%E5%AE%9E%E9%AA%8C%E5%BA%8A%E4%B8%B4%E6%97%B6%E8%B4%A6%E5%8F%B7&body=%E5%A7%93%E5%90%8D%2F%E5%8D%95%E4%BD%8D%EF%BC%9A%0A%E7%94%A8%E9%80%94%EF%BC%9A%0A%E9%A2%84%E8%AE%A1%E4%BD%BF%E7%94%A8%E6%97%B6%E9%97%B4%EF%BC%9A%0A%E8%81%94%E7%B3%BB%E6%96%B9%E5%BC%8F%EF%BC%9A%0A">cppcan@163.com</a>
-                ，并简要说明使用用途与时段。
+                <b data-i18n="login.temp.title">Request a temporary account</b><br/>
+                <span data-i18n-html="login.temp.body">Platform accounts are created by administrators upon review. To request a <b>temporary account</b> for research, teaching or evaluation purposes, please email <a href="mailto:cppcan@163.com">cppcan@163.com</a> with a brief description of your intended use and time frame.</span>
             </div>
         </div>
     </div>
 </div>
+<script src="/js/i18n.js"></script>
 <script src="/js/api.js"></script>
 <script>
 const u = document.getElementById('u');
@@ -118,7 +145,8 @@ const nextUrl = qs.get('next') || '/dashboard.html';
 const feishuErrText = qs.get('feishu_err');
 if (feishuErrText) {
     const box = document.getElementById('feishuErr');
-    box.textContent = '飞书登录失败：' + feishuErrText;
+    const prefix = window.I18N ? I18N.t('login.feishu.err_prefix') : 'Feishu sign-in failed: ';
+    box.textContent = prefix + feishuErrText;
     box.hidden = false;
 }
 
