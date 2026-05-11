@@ -16,6 +16,7 @@ import io
 import logging
 import os
 import random
+import re
 import tarfile
 import time
 from typing import Iterable, Optional
@@ -252,10 +253,22 @@ def _resolve_image(arch: Optional[str], image: Optional[str]) -> str:
     return ARCH_IMAGES.get("amd64") or "ubuntu:22.04"
 
 
+_RFC1123_INVALID = re.compile(r"[^a-z0-9-]+")
+
+
+def _sanitize_owner(owner: str) -> str:
+    """把任意用户名压成 RFC 1123 子片段：仅保留 [a-z0-9-]，中文等字符全部丢弃。
+    全部被丢弃时（如纯中文名）返回 "u"，避免出现空段或连续 '-'。
+    """
+    s = _RFC1123_INVALID.sub("-", owner.lower()).strip("-")
+    s = re.sub(r"-+", "-", s)
+    return s or "u"
+
+
 def _make_pod_name(prefix: str, owner: str) -> str:
     rnd = "{:04x}".format(random.randint(0, 0xFFFF))
-    base = f"{prefix}-{owner.lower()}-{int(time.time()) % 100000}-{rnd}"
-    return base.replace("_", "-")[:50]
+    base = f"{prefix}-{_sanitize_owner(owner)}-{int(time.time()) % 100000}-{rnd}"
+    return base[:50].strip("-")
 
 
 def _allocate_ssh_port(pod_name: str, user_id: int) -> int:
