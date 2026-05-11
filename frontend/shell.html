@@ -4,6 +4,9 @@
 <meta charset="UTF-8" />
 <title>智能云边端调度系统 · Web Shell</title>
 <link rel="stylesheet" href="/css/style.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
 </head>
 <body>
 <div class="shell-wrap">
@@ -15,46 +18,53 @@
         </div>
     </div>
     <div id="term"></div>
-    <input id="shell-input" placeholder="在此输入命令，按回车发送（支持 ctrl+c / ctrl+d 单字符）" autocomplete="off" />
 </div>
 
 <script>
 const params = new URLSearchParams(location.search);
 const pod = params.get('pod');
 document.getElementById('podName').textContent = pod || '(未指定)';
-const term = document.getElementById('term');
-const input = document.getElementById('shell-input');
 const status = document.getElementById('status');
+const termEl = document.getElementById('term');
+
+const term = new Terminal({
+    cursorBlink: true,
+    fontFamily: 'ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace',
+    fontSize: 13,
+    theme: {
+        background: '#0a0e1a',
+        foreground: '#e2e8f0',
+        cursor: '#e2e8f0',
+        selectionBackground: '#334155',
+    },
+});
+const fit = new FitAddon.FitAddon();
+term.loadAddon(fit);
+term.open(termEl);
+fit.fit();
+term.focus();
+
+window.addEventListener('resize', () => { try { fit.fit(); } catch (_) {} });
 
 if (!pod) {
-    term.textContent = '缺少 pod 参数';
+    term.write('\x1b[31m缺少 pod 参数\x1b[0m\r\n');
 } else {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${location.host}/ws/shell/${encodeURIComponent(pod)}`);
+    ws.binaryType = 'arraybuffer';
+    const decoder = new TextDecoder('utf-8');
+
     ws.onopen = () => { status.textContent = '已连接'; status.style.color = '#34d399'; };
     ws.onclose = () => { status.textContent = '已断开'; status.style.color = '#f87171'; };
     ws.onerror = () => { status.textContent = '连接错误'; status.style.color = '#f87171'; };
     ws.onmessage = e => {
-        // 简易处理：把 ANSI/退格直接拼接，足够大多数 shell 输出阅读
-        term.textContent += e.data;
-        term.scrollTop = term.scrollHeight;
+        const data = typeof e.data === 'string' ? e.data : decoder.decode(new Uint8Array(e.data));
+        term.write(data);
     };
 
-    input.addEventListener('keydown', e => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            ws.send(input.value + '\n');
-            input.value = '';
-        } else if (e.ctrlKey && e.key === 'c') {
-            e.preventDefault();
-            ws.send('\x03');
-        } else if (e.ctrlKey && e.key === 'd') {
-            e.preventDefault();
-            ws.send('\x04');
-        }
+    term.onData(data => {
+        if (ws.readyState === WebSocket.OPEN) ws.send(data);
     });
-    // 让窗口加载后焦点直接到输入框
-    setTimeout(() => input.focus(), 200);
 }
 </script>
 </body>
