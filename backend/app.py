@@ -56,12 +56,14 @@ def create_app() -> Flask:
     # ---- 静态前端 ----
     @app.route("/")
     def index():
-        if not session.get("user_id"):
-            return redirect("/login.html")
-        return redirect("/dashboard.html")
+        # 已登录用户直接进控制台；未登录则进公开欢迎页
+        if session.get("user_id"):
+            return redirect("/dashboard.html")
+        return redirect("/welcome.html")
 
     # 不需要登录就能访问的前端页面 / 静态资源前缀（白名单）
-    _PUBLIC_FILES = {"login.html", "favicon.ico"}
+    # welcome.html / devices.html 为对外展示页面，仅消费 /api/public/* 静态数据，不接触集群
+    _PUBLIC_FILES = {"login.html", "welcome.html", "devices.html", "favicon.ico"}
     _PUBLIC_PREFIXES = ("css/", "js/", "img/", "assets/", "fonts/")
 
     @app.route("/<path:filename>")

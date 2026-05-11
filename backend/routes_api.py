@@ -17,6 +17,74 @@ bp = Blueprint("api", __name__, url_prefix="/api")
 
 
 # --------------------------------------------------------------------------------------
+# 公开接口（无需登录；仅返回静态展示数据，不接触集群）
+# --------------------------------------------------------------------------------------
+
+# 云边端多智能体实验床设备清单（恒定数据，专用于公开展示页面）
+# - category: cloud / edge / iot  （云 / 边 / 端）
+# - has_online_status:
+#     True  -> 展示在线/离线状态（所有数量均视为在线）
+#     False -> 仅展示数量，不参与在线状态
+_PUBLIC_DEVICE_INVENTORY = [
+    # ---- Cloud ----
+    {"category": "cloud", "device": "Dell PowerEdge R750",       "isa": "x86_64",   "discrete_gpu": True,  "count": 7,  "has_online_status": True},
+    {"category": "cloud", "device": "Cisco Rack Server",         "isa": "x86_64",   "discrete_gpu": True,  "count": 1,  "has_online_status": True},
+    {"category": "cloud", "device": "Dell Precision 3680",       "isa": "x86_64",   "discrete_gpu": False, "count": 1,  "has_online_status": True},
+
+    # ---- Edge ----
+    {"category": "edge",  "device": "NVIDIA Jetson Orin NX",     "isa": "ARM64",    "discrete_gpu": True,  "count": 12, "has_online_status": True},
+    {"category": "edge",  "device": "NVIDIA Jetson AGX Orin",    "isa": "ARM64",    "discrete_gpu": True,  "count": 2,  "has_online_status": True},
+    {"category": "edge",  "device": "Milk-V Meles",              "isa": "RISC-V 64","discrete_gpu": False, "count": 8,  "has_online_status": True},
+    {"category": "edge",  "device": "Milk-V Pioneer",            "isa": "RISC-V 64","discrete_gpu": True,  "count": 2,  "has_online_status": True},
+    {"category": "edge",  "device": "StarFive VisionFive 2",     "isa": "RISC-V 64","discrete_gpu": False, "count": 6,  "has_online_status": True},
+    {"category": "edge",  "device": "NVIDIA Jetson Nano",        "isa": "ARM64",    "discrete_gpu": True,  "count": 16, "has_online_status": True},
+    {"category": "edge",  "device": "Raspberry Pi 5 (8GB)",      "isa": "ARM64",    "discrete_gpu": False, "count": 16, "has_online_status": True},
+
+    # ---- IoT (端) ----
+    # 仅 Yahboom ROS car 与 PuppyPi 参与在线状态展示，其余仅展示数量
+    {"category": "iot",   "device": "Yahboom ROS Car",           "isa": "ARM64",    "discrete_gpu": False, "count": 4,  "has_online_status": True},
+    {"category": "iot",   "device": "PuppyPi",                   "isa": "ARM64",    "discrete_gpu": False, "count": 4,  "has_online_status": True},
+    {"category": "iot",   "device": "Intel RealSense D435i",     "isa": "—",        "discrete_gpu": False, "count": 10, "has_online_status": False},
+    {"category": "iot",   "device": "STM32",                     "isa": "ARM32",    "discrete_gpu": False, "count": 30, "has_online_status": False},
+    {"category": "iot",   "device": "Songle 3 Relay",            "isa": "—",        "discrete_gpu": False, "count": 20, "has_online_status": False},
+    {"category": "iot",   "device": "ATmega328P",                "isa": "AVR 8-bit","discrete_gpu": False, "count": 10, "has_online_status": False},
+    {"category": "iot",   "device": "Orange Pi Zero 2",          "isa": "ARM64",    "discrete_gpu": False, "count": 10, "has_online_status": False},
+    {"category": "iot",   "device": "Mi Home Kits",              "isa": "—",        "discrete_gpu": False, "count": 22, "has_online_status": False},
+    {"category": "iot",   "device": "TelosB",                    "isa": "MSP430",   "discrete_gpu": False, "count": 20, "has_online_status": False},
+]
+
+
+@bp.get("/public/devices")
+def public_devices():
+    """对外展示：返回云边端实验床设备清单。
+
+    该接口**完全不访问 Kubernetes 集群**，仅返回恒定的静态数据，
+    安全地暴露在公网。所有"在线数量"等于"数量"，状态恒为在线。
+    """
+    devices = []
+    totals = {"cloud": 0, "edge": 0, "iot": 0, "all": 0, "online": 0}
+    for d in _PUBLIC_DEVICE_INVENTORY:
+        count = int(d["count"])
+        online = count if d["has_online_status"] else None
+        status = "online" if d["has_online_status"] else "n/a"
+        devices.append({
+            "category":          d["category"],
+            "device":            d["device"],
+            "isa":               d["isa"],
+            "discrete_gpu":      bool(d["discrete_gpu"]),
+            "count":             count,
+            "online_count":      online,
+            "has_online_status": d["has_online_status"],
+            "status":            status,
+        })
+        totals[d["category"]] = totals.get(d["category"], 0) + count
+        totals["all"] += count
+        if d["has_online_status"]:
+            totals["online"] += count
+    return jsonify({"devices": devices, "totals": totals})
+
+
+# --------------------------------------------------------------------------------------
 # 认证
 # --------------------------------------------------------------------------------------
 

@@ -25,10 +25,51 @@
       background: #fef2f2; border: 1px solid #fecaca; padding: 6px 8px; border-radius: 4px;
   }
   .feishu-err[hidden] { display: none; }
+
+  /* 临时账号申请提示 */
+  .temp-acct-note {
+      margin-top: 14px;
+      padding: 12px 14px;
+      background: #eef2ff;
+      border: 1px solid #c7d2fe;
+      border-radius: 8px;
+      font-size: 12.5px;
+      line-height: 1.65;
+      color: #3730a3;
+      display: flex; gap: 10px; align-items: flex-start;
+  }
+  .temp-acct-note svg { flex-shrink: 0; margin-top: 1px; color: #6366f1; }
+  .temp-acct-note a {
+      color: #4338ca; font-weight: 600;
+      border-bottom: 1px dashed #818cf8;
+  }
+  .temp-acct-note a:hover { color: #312e81; text-decoration: none; }
+  .temp-acct-note b { color: #1e1b4b; }
+
+  /* 返回欢迎页链接 */
+  .back-home {
+      position: absolute; top: 20px; left: 24px;
+      color: rgba(255,255,255,.75);
+      font-size: 13px;
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 12px; border-radius: 8px;
+      background: rgba(255,255,255,.06);
+      border: 1px solid rgba(255,255,255,.10);
+      transition: background .15s ease, color .15s ease;
+      z-index: 2;
+  }
+  .back-home:hover {
+      color: #fff; background: rgba(255,255,255,.12);
+      text-decoration: none;
+  }
 </style>
 </head>
 <body>
 <div class="login-wrap">
+    <a class="back-home" href="/welcome.html">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        返回欢迎页
+    </a>
     <div class="login-box">
         <h1>智能云边端调度系统</h1>
         <div class="subtitle">Cloud · Edge · Device · Unified Scheduling</div>
@@ -52,7 +93,15 @@
           使用飞书登录
         </button>
 
-        <div class="switch">账号由管理员创建，如需开通请联系管理员</div>
+        <div class="temp-acct-note">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16v12H4z"/><path d="M4 6l8 7 8-7"/></svg>
+            <div>
+                <b>申请临时账号</b><br/>
+                平台账号由管理员审核创建。如需用于科研、教学或评测的<b>临时账号</b>，请发送邮件至
+                <a href="mailto:cppcan@163.com?subject=%E7%94%B3%E8%AF%B7%E4%BA%91%E8%BE%B9%E7%AB%AF%E5%AE%9E%E9%AA%8C%E5%BA%8A%E4%B8%B4%E6%97%B6%E8%B4%A6%E5%8F%B7&body=%E5%A7%93%E5%90%8D%2F%E5%8D%95%E4%BD%8D%EF%BC%9A%0A%E7%94%A8%E9%80%94%EF%BC%9A%0A%E9%A2%84%E8%AE%A1%E4%BD%BF%E7%94%A8%E6%97%B6%E9%97%B4%EF%BC%9A%0A%E8%81%94%E7%B3%BB%E6%96%B9%E5%BC%8F%EF%BC%9A%0A">cppcan@163.com</a>
+                ，并简要说明使用用途与时段。
+            </div>
+        </div>
     </div>
 </div>
 <script src="/js/api.js"></script>
