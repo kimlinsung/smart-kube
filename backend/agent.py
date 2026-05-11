@@ -173,7 +173,7 @@ def _fallback_chat(user: dict, text: str, uploaded_file: str | None) -> str:
         return tools_mod.list_my_resources.invoke({})
     if action == "delete":
         if not parsed.get("pod_name"):
-            return "请提供要删除的 Pod 名称"
+            return "请提供要删除的 Units 名称"
         return tools_mod.delete_my_pod.invoke({"pod_name": parsed["pod_name"]})
     if action == "nodes":
         return tools_mod.admin_list_nodes.invoke({})

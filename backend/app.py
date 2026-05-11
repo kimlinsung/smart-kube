@@ -40,9 +40,9 @@ def create_app() -> Flask:
     try:
         n = k8s_client.migrate_unlabeled_pods_to(db.ensure_default_experiment)
         if n:
-            app.logger.info("已将 %d 个旧 Pod 关联到各自的默认实验", n)
+            app.logger.info("已将 %d 个旧 Units 关联到各自的默认实验", n)
     except Exception as e:
-        app.logger.warning("旧 Pod 实验迁移失败（可忽略）：%s", e)
+        app.logger.warning("旧 Units 实验迁移失败（可忽略）：%s", e)
 
     # 注册 REST 路由
     app.register_blueprint(routes_api.bp)

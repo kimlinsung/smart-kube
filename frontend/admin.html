@@ -120,7 +120,7 @@ async function loadAllPods() {
         const r = await API.adminPods();
         body.innerHTML = '';
         if (!r.pods.length) {
-            body.innerHTML = '<tr><td colspan="8" style="color:#6b7280">暂无 Pod</td></tr>';
+            body.innerHTML = '<tr><td colspan="8" style="color:#6b7280">暂无 Units</td></tr>';
             return;
         }
         groupByNodeType(r.pods).forEach(({ type, items }) => {

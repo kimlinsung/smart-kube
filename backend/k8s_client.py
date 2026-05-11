@@ -16,7 +16,6 @@ import io
 import logging
 import os
 import random
-import re
 import tarfile
 import time
 from typing import Iterable, Optional
@@ -29,6 +28,7 @@ from .config import (
     ARCH_IMAGES,
     KUBECONFIG,
     NAMESPACE,
+    PROXY_CONF,
     RES_CONF,
     SSH_CONF,
 )
@@ -63,6 +63,46 @@ _ARCH_ALIASES: dict[str, str] = {
 def _normalize_arch(arch: str) -> str:
     """将用户输入的架构名规范化为 kubernetes.io/arch 标准值。"""
     return _ARCH_ALIASES.get(arch.lower(), arch.lower())
+
+
+def _proxy_export_snippet() -> str:
+    """返回容器 init 阶段用的代理 export 片段；未启用时返回空串。"""
+    if not PROXY_CONF or not PROXY_CONF.get("enabled"):
+        return ""
+    parts = []
+    if PROXY_CONF.get("http"):
+        parts.append(f"export http_proxy={PROXY_CONF['http']}")
+        parts.append(f"export HTTP_PROXY={PROXY_CONF['http']}")
+    if PROXY_CONF.get("https"):
+        parts.append(f"export https_proxy={PROXY_CONF['https']}")
+        parts.append(f"export HTTPS_PROXY={PROXY_CONF['https']}")
+    if PROXY_CONF.get("all"):
+        parts.append(f"export all_proxy={PROXY_CONF['all']}")
+        parts.append(f"export ALL_PROXY={PROXY_CONF['all']}")
+    if PROXY_CONF.get("no_proxy"):
+        parts.append(f"export no_proxy={PROXY_CONF['no_proxy']}")
+        parts.append(f"export NO_PROXY={PROXY_CONF['no_proxy']}")
+    if not parts:
+        return ""
+    return "; ".join(parts) + "; "
+
+
+_PROXY_UNSET_SNIPPET = (
+    "unset http_proxy HTTP_PROXY https_proxy HTTPS_PROXY "
+    "all_proxy ALL_PROXY no_proxy NO_PROXY; "
+)
+
+
+def _wrap_init_with_proxy(init_cmd: str) -> str:
+    """把容器 init 命令包成 `export proxy ; <init> ; unset proxy`。
+
+    业务节点可能没有公网访问，init 时通过代理出网；init 完成后 unset，
+    避免污染后续业务进程（sshd/sleep 等）的环境。
+    """
+    export = _proxy_export_snippet()
+    if not export:
+        return init_cmd
+    return f"{export}{init_cmd}; {_PROXY_UNSET_SNIPPET}"
 
 
 # --------------------------------------------------------------------------------------
@@ -212,25 +252,10 @@ def _resolve_image(arch: Optional[str], image: Optional[str]) -> str:
     return ARCH_IMAGES.get("amd64") or "ubuntu:22.04"
 
 
-_DNS1123_RE = re.compile(r"[^a-z0-9-]+")
-
-
-def _sanitize_dns1123(s: str, fallback: str = "u") -> str:
-    """把任意字符串压成合法的 RFC 1123 子域片段：仅保留小写字母、数字、'-'。
-
-    非 ASCII（如中文用户名）会被剥掉；空串回退到 fallback。
-    """
-    s = (s or "").lower().replace("_", "-")
-    s = _DNS1123_RE.sub("-", s)
-    s = re.sub(r"-+", "-", s).strip("-")
-    return s or fallback
-
-
-def _make_pod_name(prefix: str, owner: str, owner_id: Optional[int] = None) -> str:
+def _make_pod_name(prefix: str, owner: str) -> str:
     rnd = "{:04x}".format(random.randint(0, 0xFFFF))
-    safe_owner = _sanitize_dns1123(owner, fallback=f"u{owner_id}" if owner_id else "u")
-    base = f"{prefix}-{safe_owner}-{int(time.time()) % 100000}-{rnd}"
-    return base.strip("-")[:50].strip("-")
+    base = f"{prefix}-{owner.lower()}-{int(time.time()) % 100000}-{rnd}"
+    return base.replace("_", "-")[:50]
 
 
 def _allocate_ssh_port(pod_name: str, user_id: int) -> int:
@@ -318,12 +343,13 @@ def create_ssh_pod(
     else:
         image_resolved = _resolve_image(arch_canonical or node["arch"], image)
     owner_label = str(user["id"])
-    pod_name = _make_pod_name(name_prefix, user["username"], owner_id=user["id"])
+    pod_name = _make_pod_name(name_prefix, user["username"])
     root_pwd = SSH_CONF.get("default_root_password", "smartkube")
     nodeport = _allocate_ssh_port(pod_name, user["id"])
 
     # 启动脚本：安装并启动 sshd（兼容 debian/ubuntu 系镜像）
-    start_cmd = (
+    # init 阶段用代理出网（业务节点可能无公网），init 完成后 unset，避免污染 sshd 进程
+    init_cmd = (
         "set -e; "
         "if ! command -v sshd >/dev/null 2>&1; then "
         "  (apt-get update && apt-get install -y --no-install-recommends openssh-server) "
@@ -335,9 +361,9 @@ def create_ssh_pod(
         "sed -i 's/^#\\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config || true; "
         "sed -i 's/^#\\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config || true; "
         "ssh-keygen -A 2>/dev/null || true; "
-        "echo '[smart-kube] ssh ready'; "
-        "exec /usr/sbin/sshd -D -e"
+        "echo '[smart-kube] ssh ready'"
     )
+    start_cmd = _wrap_init_with_proxy(init_cmd) + "exec /usr/sbin/sshd -D -e"
 
     requests = {
         "cpu": cpu or RES_CONF.get("default_cpu_request", "100m"),
@@ -755,8 +781,18 @@ def exec_in_pod(pod_name: str, command: list[str], timeout: int = 60) -> dict:
     return {"stdout": "".join(out), "stderr": "".join(err)}
 
 
-def open_exec_stream(pod_name: str, command: Iterable[str] = ("/bin/sh", "-l")):
-    """打开一个交互式 exec 流，用于 Web Shell。"""
+_DEFAULT_SHELL_CMD = (
+    "/bin/sh",
+    "-c",
+    "if command -v bash >/dev/null 2>&1; then exec bash -l; else exec sh -l; fi",
+)
+
+
+def open_exec_stream(pod_name: str, command: Iterable[str] = _DEFAULT_SHELL_CMD):
+    """打开一个交互式 exec 流，用于 Web Shell。
+
+    默认优先用 bash（更友好的 tab 补全 / 历史 / 提示符），镜像没装 bash 时退回 sh。
+    """
     return stream.stream(
         core_v1.connect_get_namespaced_pod_exec,
         pod_name,
@@ -821,14 +857,16 @@ def run_python_oneshot(
     node = find_node_by_arch_or_hostname(arch=arch_canonical, hostname=hostname, node_type=node_type)
     if not node:
         raise RuntimeError("未找到可用节点用于 Python 执行")
-    name = _make_pod_name("pyexec", user["username"], owner_id=user["id"])
+    name = _make_pod_name("pyexec", user["username"])
 
     # 让容器先睡眠等待我们 cp 文件后 exec 触发执行
+    # init 阶段（这里几乎没有 init）也走代理，确保 init 行为一致
+    pyinit_cmd = _wrap_init_with_proxy("echo '[smart-kube] pyexec ready'") + f"exec sleep {timeout + 60}"
     container = client.V1Container(
         name="main",
         image=image,
         image_pull_policy="IfNotPresent",
-        command=["/bin/sh", "-c", f"sleep {timeout + 60}"],
+        command=["/bin/sh", "-c", pyinit_cmd],
         resources=client.V1ResourceRequirements(
             requests={"cpu": "100m", "memory": "128Mi"},
             limits={"cpu": "1", "memory": "1Gi"},

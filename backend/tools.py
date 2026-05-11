@@ -245,7 +245,7 @@ def admin_list_all_pods() -> str:
         return "❌ 仅管理员可调用本工具。"
     pods = k8s_client.list_user_pods(_user(), all_users=True)
     if not pods:
-        return "暂无 Pod。"
+        return "暂无 Units。"
     lines = ["所有 Pod："]
     for p in pods:
         lines.append(

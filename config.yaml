@@ -11,7 +11,7 @@ llm:
 flask:
   secret_key: "smart-kube-please-change-me"
   host: "0.0.0.0"
-  port: 65001
+  port: 80
   debug: false
 
 # 飞书（Lark/Feishu）OAuth2.0 网页授权登录配置
@@ -51,6 +51,15 @@ resources:
   default_memory_request: "128Mi"
   default_cpu_limit: "1"
   default_memory_limit: "1Gi"
+
+# 容器初始化阶段使用的网络代理（业务节点可能没有公网）
+# 留空或 enabled: false 时不注入；仅在容器 init 命令期间生效，init 完成后会 unset
+proxy:
+  enabled: true
+  http: "http://192.168.1.119:7897"
+  https: "http://192.168.1.119:7897"
+  all: "socks5://192.168.1.119:7897"
+  no_proxy: "localhost,127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.svc,.cluster.local"
 
 # 架构 -> 默认基础镜像映射（可按集群可用镜像调整）
 arch_images:
