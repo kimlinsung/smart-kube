@@ -376,7 +376,13 @@ def create_ssh_pod(
         "ssh-keygen -A 2>/dev/null || true; "
         "echo '[smart-kube] ssh ready'"
     )
-    start_cmd = _wrap_init_with_proxy(init_cmd) + "exec /usr/sbin/sshd -D -e"
+    # sshd 尽力而为地后台启动（装失败/无网也不致命），PID 1 用 sleep infinity 保持容器存活，
+    # 这样即便 SSH 起不来，平台仍可通过 kubectl exec（Web Shell）进入容器，避免 CrashLoopBackOff。
+    start_cmd = (
+        _wrap_init_with_proxy(init_cmd)
+        + "( /usr/sbin/sshd -D -e || echo '[smart-kube] sshd unavailable' ) & "
+        + "exec sleep infinity"
+    )
 
     requests = {
         "cpu": cpu or RES_CONF.get("default_cpu_request", "100m"),
