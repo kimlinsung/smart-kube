@@ -277,12 +277,15 @@
     .pub-top { flex-wrap: wrap; gap: 8px; }
   }
 </style>
+<link rel="stylesheet" href="/css/public.css" />
 </head>
-<body>
+<body class="public-page devices-page">
 
 <header class="pub-top">
   <a class="pub-brand" href="/welcome.html">
-    <span class="pub-brand-mark"></span>
+    <span class="pub-brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5.5" r="2.25"/><circle cx="5.5" cy="17.5" r="2.25"/><circle cx="18.5" cy="17.5" r="2.25"/><path d="M10.9 7.5 6.6 15.5M13.1 7.5l4.3 8M7.8 17.5h8.4"/><path d="M12 11.2l2.1 1.2v2.4L12 16l-2.1-1.2v-2.4L12 11.2z"/></svg>
+    </span>
     <span data-i18n="brand">Cloud-Edge-IoT Multi-Agent Testbed</span>
   </a>
   <nav class="pub-nav">

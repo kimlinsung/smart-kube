@@ -117,9 +117,15 @@ def _history_to_messages(rows) -> list[BaseMessage]:
     return out
 
 
-def chat(user: dict, user_text: str, uploaded_file: str | None = None, experiment_id: int | None = None) -> str:
+def chat(
+    user: dict,
+    user_text: str,
+    uploaded_file: str | None = None,
+    experiment_id: int | None = None,
+    source_ip: str = "unknown",
+) -> str:
     """单次对话入口：把历史 + 当前消息丢进 graph，得到最终回复。"""
-    tools_mod.set_user(user, uploaded_file=uploaded_file, experiment_id=experiment_id)
+    tools_mod.set_user(user, uploaded_file=uploaded_file, experiment_id=experiment_id, source_ip=source_ip)
     db.add_chat(user["id"], "user", user_text, experiment_id=experiment_id)
 
     history = db.get_chat(user["id"], limit=20, experiment_id=experiment_id)
@@ -200,7 +206,13 @@ _TOOL_LABELS = {
 }
 
 
-def chat_stream(user: dict, user_text: str, uploaded_file: str | None = None, experiment_id: int | None = None):
+def chat_stream(
+    user: dict,
+    user_text: str,
+    uploaded_file: str | None = None,
+    experiment_id: int | None = None,
+    source_ip: str = "unknown",
+):
     """流式对话：yield 事件字典。
 
     事件类型：
@@ -208,7 +220,7 @@ def chat_stream(user: dict, user_text: str, uploaded_file: str | None = None, ex
       {"delta": "文本片段"}         面向用户的回复 token
     结束后将完整回复存入数据库。
     """
-    tools_mod.set_user(user, uploaded_file=uploaded_file, experiment_id=experiment_id)
+    tools_mod.set_user(user, uploaded_file=uploaded_file, experiment_id=experiment_id, source_ip=source_ip)
     db.add_chat(user["id"], "user", user_text, experiment_id=experiment_id)
 
     history = db.get_chat(user["id"], limit=20, experiment_id=experiment_id)

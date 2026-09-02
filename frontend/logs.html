@@ -49,8 +49,8 @@
         </div>
         <div class="card-body flush table-scroll">
           <table>
-            <thead><tr><th>时间</th><th>用户</th><th>动作</th><th>详情</th></tr></thead>
-            <tbody id="body"><tr class="loading-row"><td colspan="4"><span class="spinner"></span> 加载中…</td></tr></tbody>
+            <thead><tr><th>时间</th><th>用户</th><th>来源 IP</th><th>动作</th><th>详情</th></tr></thead>
+            <tbody id="body"><tr class="loading-row"><td colspan="5"><span class="spinner"></span> 加载中…</td></tr></tbody>
           </table>
         </div>
         <div class="log-pager">
@@ -124,7 +124,7 @@ async function load(resetPage = false) {
     const endAt = localDayEpoch(document.getElementById('endDate').value, true);
     if (startAt && endAt && startAt > endAt) { alert('开始日期不能晚于结束日期'); return; }
     const body = document.getElementById('body');
-    body.innerHTML = '<tr class="loading-row"><td colspan="4"><span class="spinner"></span> 加载中…</td></tr>';
+    body.innerHTML = '<tr class="loading-row"><td colspan="5"><span class="spinner"></span> 加载中…</td></tr>';
     try {
         const r = await API.logs(queryParams());
         state.page = r.page;
@@ -138,14 +138,15 @@ async function load(resetPage = false) {
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td style="white-space:nowrap;color:var(--muted);">${fmtTime(l.created_at)}</td>
-                <td>${escapeHtml(l.username||'-')}</td>
+                <td>${escapeHtml(l.username||'unknown')}</td>
+                <td><code>${escapeHtml(l.source_ip||'-')}</code></td>
                 <td><span class="badge badge-blue">${escapeHtml(l.action)}</span></td>
                 <td style="font-size:12.5px;color:var(--text-2);">${escapeHtml(l.detail||'')}</td>`;
             body.appendChild(tr);
         });
-        if (!r.logs.length) body.innerHTML = `<tr><td colspan="4"><div class="empty-state"><div class="t">暂无日志</div></div></td></tr>`;
+        if (!r.logs.length) body.innerHTML = `<tr><td colspan="5"><div class="empty-state"><div class="t">暂无日志</div></div></td></tr>`;
         renderPager();
-    } catch (e) { body.innerHTML = `<tr><td colspan="4" style="color:var(--danger)">${escapeHtml(e.message)}</td></tr>`; }
+    } catch (e) { body.innerHTML = `<tr><td colspan="5" style="color:var(--danger)">${escapeHtml(e.message)}</td></tr>`; }
 }
 
 document.getElementById('refresh').onclick = () => load();

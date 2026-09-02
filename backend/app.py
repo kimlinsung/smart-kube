@@ -9,11 +9,11 @@ from __future__ import annotations
 import logging
 import os
 
-from flask import Flask, redirect, send_from_directory, session
+from flask import Flask, redirect, request, send_from_directory, session
 from flask_cors import CORS
 from flask_sock import Sock
 
-from . import auth, db, k8s_client, presence, routes_api, routes_feishu, routes_shell
+from . import audit, auth, db, k8s_client, presence, routes_api, routes_feishu, routes_shell
 from .config import FLASK_CONF, FRONTEND_DIR
 
 
@@ -79,6 +79,23 @@ def create_app() -> Flask:
         if not is_public and filename.endswith(".html") and not session.get("user_id"):
             return redirect(f"/login.html?next=/{filename}")
         return send_from_directory(FRONTEND_DIR, filename)
+
+    @app.after_request
+    def audit_page_view(response):
+        """Record successful document visits without logging assets or APIs."""
+        if request.method != "GET" or response.status_code != 200 or not request.path.endswith(".html"):
+            return response
+        try:
+            user = auth.current_user()
+            audit.log(
+                user["id"] if user else None,
+                user["username"] if user else "unknown",
+                "page_view",
+                request.path,
+            )
+        except Exception:
+            app.logger.exception("记录页面访问审计日志失败")
+        return response
 
     return app
 

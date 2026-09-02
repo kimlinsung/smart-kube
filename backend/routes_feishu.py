@@ -13,7 +13,7 @@ from urllib.parse import urlparse, urlunparse
 
 from flask import Blueprint, jsonify, redirect, request, session, url_for
 
-from . import auth, db, feishu
+from . import audit, auth, db, feishu
 from .config import FEISHU_CONF
 
 log = logging.getLogger(__name__)
@@ -108,7 +108,7 @@ def callback():
     session["login_via"] = "feishu"
     session["current_experiment_id"] = db.ensure_default_experiment(user["id"])
 
-    db.log_audit(
+    audit.log(
         user["id"], user["username"], "login_feishu",
         f"open_id={user.get('feishu_open_id','')} name={user.get('name','')}",
     )

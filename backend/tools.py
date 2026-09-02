@@ -15,19 +15,26 @@ from typing import Optional
 
 from langchain_core.tools import tool
 
-from . import db, k8s_client
+from . import audit, db, k8s_client
 from .config import UPLOAD_DIR
 
 # 使用 ContextVar 代替 threading.local，确保在 LangGraph 线程池中也能正确继承上下文
 _user_ctx: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar("current_user", default=None)
 _file_ctx: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("uploaded_file", default=None)
 _exp_ctx: contextvars.ContextVar[Optional[int]] = contextvars.ContextVar("current_experiment", default=None)
+_source_ip_ctx: contextvars.ContextVar[str] = contextvars.ContextVar("source_ip", default="unknown")
 
 
-def set_user(user: dict, uploaded_file: Optional[str] = None, experiment_id: Optional[int] = None):
+def set_user(
+    user: dict,
+    uploaded_file: Optional[str] = None,
+    experiment_id: Optional[int] = None,
+    source_ip: str = "unknown",
+):
     _user_ctx.set(user)
     _file_ctx.set(uploaded_file)
     _exp_ctx.set(experiment_id)
+    _source_ip_ctx.set(source_ip)
 
 
 def _exp() -> Optional[int]:
@@ -47,7 +54,13 @@ def _is_admin() -> bool:
 
 def _audit(action: str, detail):
     u = _user()
-    db.log_audit(u["id"], u["username"], action, detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False))
+    audit.log(
+        u["id"],
+        u["username"],
+        action,
+        detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False),
+        source_ip=_source_ip_ctx.get(),
+    )
 
 
 # --------------------------------------------------------------------------------------

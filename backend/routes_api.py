@@ -10,8 +10,9 @@ import json
 from flask import Blueprint, Response, jsonify, request, session, stream_with_context
 from werkzeug.utils import secure_filename
 
-from . import agent, auth, db, k8s_client, presence
+from . import agent, audit, auth, db, k8s_client, presence
 from .config import UPLOAD_DIR
+from .request_meta import client_ip
 
 bp = Blueprint("api", __name__, url_prefix="/api")
 
@@ -97,7 +98,7 @@ def login():
     session.clear()
     session["user_id"] = user["id"]
     session["current_experiment_id"] = db.ensure_default_experiment(user["id"])
-    db.log_audit(user["id"], user["username"], "login", "")
+    audit.log(user["id"], user["username"], "login", "")
     return jsonify({"id": user["id"], "username": user["username"], "role": user["role"]})
 
 
@@ -105,7 +106,7 @@ def login():
 def logout():
     u = auth.current_user()
     if u:
-        db.log_audit(u["id"], u["username"], "logout", "")
+        audit.log(u["id"], u["username"], "logout", "")
     session.clear()
     return jsonify({"ok": True})
 
@@ -198,7 +199,7 @@ def delete_resource(pod_name):
     u = request.current_user
     try:
         k8s_client.delete_pod(pod_name, u)
-        db.log_audit(u["id"], u["username"], "delete_pod", pod_name)
+        audit.log(u["id"], u["username"], "delete_pod", pod_name)
         return jsonify({"ok": True})
     except PermissionError as e:
         return jsonify({"error": str(e)}), 403
@@ -226,7 +227,13 @@ def chat():
     if not text:
         return jsonify({"error": "消息为空"}), 400
     exp_id = _current_experiment_id(u)
-    reply = agent.chat(u, text, uploaded_file=uploaded, experiment_id=exp_id)
+    reply = agent.chat(
+        u,
+        text,
+        uploaded_file=uploaded,
+        experiment_id=exp_id,
+        source_ip=client_ip(),
+    )
     return jsonify({"reply": reply})
 
 
@@ -240,10 +247,17 @@ def chat_stream():
         return jsonify({"error": "消息为空"}), 400
     uploaded = session.get("uploaded_file")
     exp_id = _current_experiment_id(u)
+    source_ip = client_ip()
 
     def generate():
         try:
-            for ev in agent.chat_stream(u, text, uploaded_file=uploaded, experiment_id=exp_id):
+            for ev in agent.chat_stream(
+                u,
+                text,
+                uploaded_file=uploaded,
+                experiment_id=exp_id,
+                source_ip=source_ip,
+            ):
                 # 兼容：若底层仍 yield 纯字符串，则包一层 delta
                 if isinstance(ev, str):
                     ev = {"delta": ev}
@@ -297,7 +311,7 @@ def upload():
     save_path = os.path.join(user_dir, save_name)
     f.save(save_path)
     session["uploaded_file"] = save_path
-    db.log_audit(u["id"], u["username"], "upload", fname)
+    audit.log(u["id"], u["username"], "upload", fname)
     return jsonify({"ok": True, "filename": fname, "path": save_path})
 
 
@@ -327,7 +341,7 @@ def upload_to_pod():
     finally:
         try: os.remove(tmp_path)
         except Exception: pass
-    db.log_audit(u["id"], u["username"], "upload_to_pod", f"{pod_name}:{pod_path}")
+    audit.log(u["id"], u["username"], "upload_to_pod", f"{pod_name}:{pod_path}")
     return jsonify({"ok": True, "pod_path": pod_path})
 
 
@@ -381,7 +395,7 @@ def create_experiment():
     desc = (data.get("description") or "").strip()
     exp = db.create_experiment(u["id"], name, desc)
     session["current_experiment_id"] = exp["id"]
-    db.log_audit(u["id"], u["username"], "create_experiment", f"{exp['id']}:{name}")
+    audit.log(u["id"], u["username"], "create_experiment", f"{exp['id']}:{name}")
     exp["owner_username"] = u["username"]
     return jsonify(_summarize_experiment(exp))
 
@@ -428,7 +442,7 @@ def enter_experiment(exp_id):
     if u["role"] != "admin" and exp["user_id"] != u["id"]:
         return jsonify({"error": "无权进入他人实验"}), 403
     session["current_experiment_id"] = exp_id
-    db.log_audit(u["id"], u["username"], "enter_experiment", str(exp_id))
+    audit.log(u["id"], u["username"], "enter_experiment", str(exp_id))
     return jsonify({"ok": True, "current_experiment_id": exp_id, "name": exp["name"]})
 
 
@@ -449,7 +463,7 @@ def delete_experiment(exp_id):
     # 当前实验若被删，回退到该用户的默认实验（必要时新建）
     if session.get("current_experiment_id") == exp_id:
         session["current_experiment_id"] = db.ensure_default_experiment(u["id"])
-    db.log_audit(u["id"], u["username"], "delete_experiment", f"{exp_id}:pods={len(deleted_pods)}")
+    audit.log(u["id"], u["username"], "delete_experiment", f"{exp_id}:pods={len(deleted_pods)}")
     return jsonify({"ok": True, "deleted_pods": deleted_pods})
 
 
@@ -469,7 +483,7 @@ def admin_cordon_node(node_name):
     u = request.current_user
     try:
         k8s_client.cordon_node(node_name)
-        db.log_audit(u["id"], u["username"], "cordon_node", node_name)
+        audit.log(u["id"], u["username"], "cordon_node", node_name)
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -481,7 +495,7 @@ def admin_uncordon_node(node_name):
     u = request.current_user
     try:
         k8s_client.uncordon_node(node_name)
-        db.log_audit(u["id"], u["username"], "uncordon_node", node_name)
+        audit.log(u["id"], u["username"], "uncordon_node", node_name)
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -493,7 +507,7 @@ def admin_delete_node(node_name):
     u = request.current_user
     try:
         k8s_client.delete_node(node_name)
-        db.log_audit(u["id"], u["username"], "delete_node", node_name)
+        audit.log(u["id"], u["username"], "delete_node", node_name)
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -537,7 +551,7 @@ def admin_create_user():
     user, err = auth.create_user(data.get("username", "").strip(), data.get("password", ""), role=role)
     if err:
         return jsonify({"error": err}), 400
-    db.log_audit(u["id"], u["username"], "create_user", user["username"])
+    audit.log(u["id"], u["username"], "create_user", user["username"])
     return jsonify({"id": user["id"], "username": user["username"], "role": user["role"]})
 
 
@@ -550,7 +564,7 @@ def admin_change_password(uid):
     err = auth.change_password(uid, new_pwd)
     if err:
         return jsonify({"error": err}), 400
-    db.log_audit(u["id"], u["username"], "change_password", f"uid={uid}")
+    audit.log(u["id"], u["username"], "change_password", f"uid={uid}")
     return jsonify({"ok": True})
 
 
@@ -565,7 +579,7 @@ def admin_set_role(uid):
     err = auth.set_role(uid, role)
     if err:
         return jsonify({"error": err}), 400
-    db.log_audit(u["id"], u["username"], "set_role", f"uid={uid} role={role}")
+    audit.log(u["id"], u["username"], "set_role", f"uid={uid} role={role}")
     return jsonify({"ok": True})
 
 
@@ -574,5 +588,5 @@ def admin_set_role(uid):
 def admin_delete_user(uid):
     u = request.current_user
     auth.delete_user(uid)
-    db.log_audit(u["id"], u["username"], "delete_user", str(uid))
+    audit.log(u["id"], u["username"], "delete_user", str(uid))
     return jsonify({"ok": True})

@@ -52,10 +52,16 @@ def init_db():
                 username TEXT,
                 action TEXT,
                 detail TEXT,
+                source_ip TEXT,
                 created_at INTEGER
             )
             """
         )
+        # 老库升级：审计日志补来源 IP，历史记录保留为空。
+        cur.execute("PRAGMA table_info(audit_logs)")
+        audit_cols = {r["name"] for r in cur.fetchall()}
+        if "source_ip" not in audit_cols:
+            cur.execute("ALTER TABLE audit_logs ADD COLUMN source_ip TEXT")
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS ssh_ports (
@@ -120,11 +126,12 @@ def init_db():
         )
 
 
-def log_audit(user_id, username, action, detail=""):
+def log_audit(user_id, username, action, detail="", source_ip=None):
     with cursor() as cur:
         cur.execute(
-            "INSERT INTO audit_logs(user_id, username, action, detail, created_at) VALUES(?,?,?,?,?)",
-            (user_id, username, action, str(detail)[:2000], int(time.time())),
+            "INSERT INTO audit_logs(user_id, username, action, detail, source_ip, created_at) "
+            "VALUES(?,?,?,?,?,?)",
+            (user_id, username, action, str(detail)[:2000], source_ip, int(time.time())),
         )
 
 
@@ -167,8 +174,8 @@ def search_audit_logs(
         params.append(action)
     if keyword:
         pattern = f"%{keyword}%"
-        clauses.append("(username LIKE ? OR action LIKE ? OR detail LIKE ?)")
-        params.extend((pattern, pattern, pattern))
+        clauses.append("(username LIKE ? OR action LIKE ? OR detail LIKE ? OR source_ip LIKE ?)")
+        params.extend((pattern, pattern, pattern, pattern))
     if start_at is not None:
         clauses.append("created_at>=?")
         params.append(int(start_at))
