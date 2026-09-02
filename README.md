@@ -11,7 +11,8 @@
 
 ```
 smart-kube/
-├── config.yaml              全局配置（LLM、管理员、kubeconfig、SSH 端口段、资源默认值）
+├── config.yaml              全局配置（含密钥，已 .gitignore，不进 git；每台机器本地维护）
+├── config.yaml.example      配置模板（占位符，进 git；`cp config.yaml.example config.yaml` 后填真实值）
 ├── requirements.txt
 ├── run.sh                   一键启动脚本（建 venv → 装依赖 → 起服务）
 ├── backend/
@@ -45,6 +46,12 @@ smart-kube/
 
 ## 配置
 
+首次准备配置（`config.yaml` 已被 `.gitignore` 忽略，只留本地、不进 git）：
+
+```bash
+cp config.yaml.example config.yaml   # 然后填入真实值
+```
+
 编辑 `config.yaml`：
 
 ```yaml
@@ -76,8 +83,8 @@ ssh:
 ```
 
 - 首次会自动创建 `.venv` 并安装依赖
-- 启动后访问 `http://<本机 IP>:5000`
-- 默认登录 `admin / admin123`
+- 启动后访问 `http://<本机 IP>:<port>`（端口取 `config.yaml` 的 `flask.port`）
+- 默认登录 `admin / <config.yaml 的 admin.password>`
 
 或手动方式：
 
@@ -86,6 +93,33 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python -m backend.app
 ```
+
+## 部署与更新（git pull 工作流）
+
+设计原则：**代码进 git，配置和数据出 git**。以下三类文件已被 `.gitignore` 忽略且不被跟踪，`git pull` 不会覆盖它们：
+
+| 路径 | 内容 | 说明 |
+|---|---|---|
+| `config.yaml` | 配置 + 密钥 | 每台机器本地维护；变更时手动复制覆盖 |
+| `data/` | SQLite 数据库（用户/实验/聊天/日志） | 运行时自动创建，随机器保留 |
+| `uploads/` | 用户上传文件 | 运行时自动创建，随机器保留 |
+
+**日常更新**：开发机 `commit + push`；部署机只需 `git pull`，配置、数据库、上传文件全部原地不动。
+配置有变时把新的 `config.yaml` 直接复制/`scp` 覆盖到部署机即可（git 不参与）。
+
+> **部署机首次迁移**（仅一次，因为老仓库里 `config.yaml` 曾被跟踪）：
+> ```bash
+> cp config.yaml ~/config.yaml.prod   # 1. 备份生产配置
+> git checkout -- config.yaml          # 2. 放弃本地改动
+> git pull                             # 3. 拉取，config.yaml 移出跟踪
+> cp ~/config.yaml.prod config.yaml    # 4. 恢复生产配置（此后未跟踪+已忽略）
+> ```
+
+## 密钥与安全
+
+- **切勿把 `config.yaml` 提交进 git**：它含 LLM key、飞书 `app_secret`、管理员密码、SSH 默认密码。仓库只保留 `config.yaml.example` 模板。
+- **切勿在 git remote URL 内嵌 GitHub Token**（如 `https://ghp_xxx@github.com/...`）：该 token 会明文留存于 `.git/config`。请改用 SSH remote 或 git 凭据助手（`git config --global credential.helper store` / 系统钥匙串）。
+- 若上述任一密钥曾提交或推送到远端（尤其是公开仓库），请视为已泄露并**立即到对应平台轮换**（GitHub Token、飞书 app_secret、管理员密码、LLM key）。仅从最新代码删除**不能**消除历史中的密钥。
 
 ## 自然语言示例
 
