@@ -9,7 +9,7 @@ import time
 
 import yaml
 
-from . import audit, db, k8s_client, task_events
+from . import audit, db, k8s_client, paper_agents, task_events
 
 
 def _run_in_thread(app, target, *args):
@@ -214,8 +214,14 @@ def _infer_resources(workspace):
     return normalized, evidence
 
 
-def _build_configuration(workspace):
+def _build_configuration(workspace, documents, intelligence):
     resource_spec, evidence = _infer_resources(workspace)
+    generated = paper_agents.run_config_agent(
+        documents,
+        intelligence,
+        {"resources": _resource_rows(resource_spec), "evidence": evidence},
+        workspace["mode"],
+    )
     return {
         "schema_version": "smart-kube.workspace/v1",
         "experiment": {
@@ -228,8 +234,17 @@ def _build_configuration(workspace):
             {"name": item["original_name"], "size": item["size"], "content_type": item["content_type"]}
             for item in workspace.get("files", [])
         ],
-        "resources": _resource_rows(resource_spec),
-        "resource_inference": {"source": "uploaded_files", "evidence": evidence},
+        "document_intelligence": intelligence,
+        "resources": generated["resources"],
+        "workflow_steps": generated["workflow_steps"],
+        "analysis_plan": generated["analysis_plan"],
+        "assumptions": generated["assumptions"],
+        "resource_inference": {
+            "source": "llm_with_rule_evidence",
+            "evidence": evidence,
+            "rule_candidates": _resource_rows(resource_spec),
+        },
+        "agent_trace": [intelligence["agent_trace"], generated["agent_trace"]],
         "lifecycle": {"reclaim": "manual", "retain_after_completion": True},
     }
 
@@ -284,9 +299,7 @@ def _schedule(user, experiment_id, configuration, workspace_id, task_id):
     }
 
 
-def _analyse(workspace):
-    schedule = workspace.get("schedule_json") or {}
-    configuration = workspace.get("config_json") or {}
+def _analysis_telemetry(workspace):
     events = workspace.get("events") or []
     phase_bounds = {}
     for event in events:
@@ -300,78 +313,19 @@ def _analyse(workspace):
         {"phase": phase, "seconds": max(1, bounds[1] - bounds[0] + 1)}
         for phase, bounds in phase_bounds.items()
     ]
-    requested = int(schedule.get("requested") or 0)
-    created = int(schedule.get("created") or 0)
-    checks = [
-        {"name": "配置结构校验", "passed": bool(configuration.get("resources")), "detail": "资源规格可解析"},
-        {"name": "调度落位校验", "passed": requested == created, "detail": f"已创建 {created}/{requested}"},
-        {"name": "输入产物归档", "passed": bool(configuration.get("inputs")), "detail": f"已保存 {len(configuration.get('inputs') or [])} 个文件"},
-        {"name": "资源保留策略", "passed": True, "detail": "运行结束后等待用户手动回收"},
-    ]
     return {
-        "verdict": "passed" if all(item["passed"] for item in checks) else "needs_attention",
-        "checks": checks,
         "stage_durations": durations,
         "resource_distribution": [
             {
                 "tier": tier,
-                "count": sum(1 for item in schedule.get("placements", []) if item.get("node_type") == tier),
+                "count": sum(
+                    1 for item in (workspace.get("schedule_json") or {}).get("placements", [])
+                    if item.get("node_type") == tier
+                ),
             }
             for tier in ("cloud", "edge", "device")
         ],
-        "analysed_at": int(time.time()),
     }
-
-
-def _report(workspace):
-    configuration = workspace.get("config_json") or {}
-    schedule = workspace.get("schedule_json") or {}
-    analysis = workspace.get("analysis_json") or {}
-    mode_label = "完整流程" if workspace["mode"] == "full" else "执行至调度"
-    lines = [
-        f"# {workspace['name']} 实验报告",
-        "",
-        "## 实验摘要",
-        "",
-        f"- **目标**：{workspace['goal']}",
-        f"- **执行模式**：{mode_label}",
-        f"- **实验编号**：{workspace['experiment_id']}",
-        f"- **输入文件**：{len(workspace.get('files') or [])} 个",
-        f"- **资源策略**：运行完成后保留，由用户决定何时回收",
-        "",
-        "## 配置结果",
-        "",
-        "| 层级 | 数量 | 架构 | 镜像 | CPU | 内存 |",
-        "| --- | ---: | --- | --- | --- | --- |",
-    ]
-    for row in configuration.get("resources", []):
-        lines.append(
-            f"| {row['tier']} | {row['count']} | {row['arch']} | {row['image']} | {row['cpu']} | {row['memory']} |"
-        )
-    lines.extend(["", "## 调度结果", ""])
-    for placement in schedule.get("placements", []):
-        lines.append(
-            f"- `{placement.get('pod_name')}` -> `{placement.get('node')}` "
-            f"({placement.get('node_type')} / {placement.get('arch')})"
-        )
-    if not schedule.get("placements"):
-        lines.append("- 暂无调度落位记录")
-    if workspace["mode"] == "full":
-        lines.extend(["", "## 分析结论", ""])
-        lines.append(f"总体判定：**{analysis.get('verdict', 'pending')}**")
-        for check in analysis.get("checks", []):
-            mark = "PASS" if check.get("passed") else "CHECK"
-            lines.append(f"- **{mark}** {check.get('name')}：{check.get('detail')}")
-        lines.append(f"- 分析重试次数：{workspace.get('retries', 0)}")
-    else:
-        lines.extend(["", "## 分析说明", "", "本次执行至调度阶段，未运行完整分析。"])
-    lines.extend([
-        "",
-        "## 生命周期",
-        "",
-        "本报告、输入文件和过程事件已归档到当前实验。资源不会自动回收。",
-    ])
-    return "\n".join(lines)
 
 
 def start_workspace_job(app, workspace, user, source_ip):
@@ -380,7 +334,7 @@ def start_workspace_job(app, workspace, user, source_ip):
         workspace["experiment_id"],
         "paper",
         workspace["name"],
-        "等待生成实验配置",
+        "等待文档理解 Agent 读取正文",
         {"workspace_id": workspace["id"], "mode": workspace["mode"]},
     )
     task_events.publish_task(task["id"])
@@ -391,16 +345,50 @@ def start_workspace_job(app, workspace, user, source_ip):
 def _execute_workspace(workspace_id, task_id, user, source_ip):
     _task_update(task_id, started_at=int(time.time()))
     try:
-        _advance(workspace_id, task_id, "config", "正在整理目标与输入文件", 12, event_type="started")
+        _advance(workspace_id, task_id, "intake", "文档理解 Agent 正在提取并阅读文件正文", 6, event_type="agent_started")
         workspace = db.get_paper_workspace(workspace_id, user_id=user["id"])
-        configuration = _build_configuration(workspace)
+        internal_files = db.list_paper_workspace_files_internal(workspace_id, user_id=user["id"])
+        documents = paper_agents.extract_documents(internal_files)
+        extraction = [{
+            "name": item["name"],
+            "characters": len(item["text"]),
+            "truncated": item["truncated"],
+            "issue": item["extraction_issue"],
+        } for item in documents]
+        db.add_paper_workspace_event(
+            workspace_id, "intake", "extracted", "文件正文提取完成", data={"files": extraction}
+        )
+        intelligence = paper_agents.run_intent_agent(documents)
+        db.update_paper_workspace(
+            workspace_id, name=intelligence["title"], goal=intelligence["goal"]
+        )
+        db.update_experiment(
+            workspace["experiment_id"],
+            intelligence["title"],
+            f"论文工作区：{intelligence['summary'][:1000]}",
+        )
+        _task_update(task_id, title=intelligence["title"])
+        db.add_paper_workspace_event(
+            workspace_id,
+            "intake",
+            "agent_completed",
+            f"文档理解 Agent 已生成实验元信息：{intelligence['title']}",
+            data={key: value for key, value in intelligence.items() if key != "agent_trace"},
+        )
+
+        _advance(workspace_id, task_id, "config", "配置 Agent 正在根据正文与解析证据形成配置", 20, event_type="agent_started")
+        workspace = db.get_paper_workspace(workspace_id, user_id=user["id"])
+        configuration = _build_configuration(workspace, documents, intelligence)
         if not configuration["resources"]:
             raise ValueError("至少需要一项云、边或端资源")
         inferred_spec = {row["tier"]: {key: value for key, value in row.items() if key != "tier"} for row in configuration["resources"]}
         db.update_paper_workspace(workspace_id, config_json=configuration, resource_spec=inferred_spec)
         for evidence in configuration["resource_inference"]["evidence"]:
             db.add_paper_workspace_event(workspace_id, "config", "inference", evidence)
-        _advance(workspace_id, task_id, "config", "配置已生成并通过结构校验", 30, data=configuration)
+        _advance(
+            workspace_id, task_id, "config", "配置 Agent 已生成配置并通过结构校验", 30,
+            event_type="agent_completed", data=configuration,
+        )
 
         _advance(workspace_id, task_id, "schedule", "正在读取现有集群能力并生成落位", 35)
         schedule = _schedule(user, workspace["experiment_id"], configuration, workspace_id, task_id)
@@ -409,16 +397,33 @@ def _execute_workspace(workspace_id, task_id, user, source_ip):
 
         workspace = db.get_paper_workspace(workspace_id, user_id=user["id"])
         if workspace["mode"] == "full":
-            _advance(workspace_id, task_id, "analysis", "正在融合配置、落位和过程证据", 82)
-            analysis = _analyse(workspace)
+            _advance(workspace_id, task_id, "analysis", "分析 Agent 正在核验配置、落位和过程证据", 82, event_type="agent_started")
+            analysis = paper_agents.run_analysis_agent(
+                workspace.get("config_json") or {},
+                workspace.get("schedule_json") or {},
+                workspace.get("events") or [],
+                retry=int(workspace.get("retries") or 0),
+            )
+            analysis.update(_analysis_telemetry(workspace))
             db.update_paper_workspace(workspace_id, analysis_json=analysis)
-            _advance(workspace_id, task_id, "analysis", "分析完成，初始检查已通过", 94, data=analysis)
+            _advance(
+                workspace_id, task_id, "analysis",
+                f"分析 Agent 完成，结论：{analysis['verdict']}", 94,
+                event_type="agent_completed", data=analysis,
+            )
         else:
             db.add_paper_workspace_event(workspace_id, "analysis", "skipped", "按用户选择跳过完整分析")
 
         workspace = db.get_paper_workspace(workspace_id, user_id=user["id"])
-        _advance(workspace_id, task_id, "report", "正在生成 Markdown 实验报告", 97)
-        report = _report(workspace)
+        _advance(workspace_id, task_id, "report", "报告 Agent 正在根据真实过程证据撰写报告", 97, event_type="agent_started")
+        report, report_trace = paper_agents.run_report_agent(workspace)
+        configuration = workspace.get("config_json") or {}
+        configuration.setdefault("agent_trace", []).append(report_trace)
+        db.update_paper_workspace(workspace_id, config_json=configuration)
+        db.add_paper_workspace_event(
+            workspace_id, "report", "agent_completed", "报告 Agent 已生成 Markdown 实验报告",
+            data={"agent_trace": report_trace},
+        )
         now = int(time.time())
         db.update_paper_workspace(
             workspace_id,
@@ -450,12 +455,17 @@ def _execute_workspace(workspace_id, task_id, user, source_ip):
         now = int(time.time())
         current = db.get_paper_workspace(workspace_id, user_id=user["id"])
         stage = current["stage"] if current else "unknown"
+        created = int(((current or {}).get("schedule_json") or {}).get("created") or 0)
+        failure_detail = (
+            f"工作流执行失败，已创建的 {created} 个资源保持不变"
+            if created else "工作流执行失败，未创建新资源"
+        )
         db.update_paper_workspace(workspace_id, status="failed", finished_at=now)
         db.add_paper_workspace_event(workspace_id, stage, "failed", message)
         _task_update(
             task_id,
             status="failed",
-            detail="工作流执行失败，已创建的资源保持不变",
+            detail=failure_detail,
             error=message,
             finished_at=now,
             event_type="failed",
@@ -493,20 +503,41 @@ def _execute_analysis_retry(workspace_id, task_id, user, source_ip):
             retries=retry_number,
             finished_at=None,
         )
-        _advance(workspace_id, task_id, "analysis", f"开始第 {retry_number} 次分析", 30, event_type="started")
+        _advance(
+            workspace_id, task_id, "analysis",
+            f"分析 Agent 开始第 {retry_number} 次分析", 30, event_type="agent_started",
+        )
         workspace = db.get_paper_workspace(workspace_id, user_id=user["id"])
-        analysis = _analyse(workspace)
+        analysis = paper_agents.run_analysis_agent(
+            workspace.get("config_json") or {},
+            workspace.get("schedule_json") or {},
+            workspace.get("events") or [],
+            retry=retry_number,
+        )
+        analysis.update(_analysis_telemetry(workspace))
         db.update_paper_workspace(workspace_id, analysis_json=analysis)
-        _advance(workspace_id, task_id, "analysis", "重新分析完成，检查已通过", 85, data=analysis)
+        _advance(
+            workspace_id, task_id, "analysis",
+            f"分析 Agent 重新分析完成，结论：{analysis['verdict']}", 85,
+            event_type="agent_completed", data=analysis,
+        )
         workspace = db.get_paper_workspace(workspace_id, user_id=user["id"])
-        report = _report(workspace)
+        _advance(workspace_id, task_id, "report", "报告 Agent 正在根据重试结果更新报告", 92, event_type="agent_started")
+        report, report_trace = paper_agents.run_report_agent(workspace)
+        configuration = workspace.get("config_json") or {}
+        configuration.setdefault("agent_trace", []).append(report_trace)
         finished = int(time.time())
         db.update_paper_workspace(
             workspace_id,
             status="completed",
             stage="completed",
+            config_json=configuration,
             report_md=report,
             finished_at=finished,
+        )
+        db.add_paper_workspace_event(
+            workspace_id, "report", "agent_completed", "报告 Agent 已更新 Markdown 实验报告",
+            data={"agent_trace": report_trace},
         )
         db.add_paper_workspace_event(workspace_id, "completed", "succeeded", f"第 {retry_number} 次分析完成")
         _task_update(

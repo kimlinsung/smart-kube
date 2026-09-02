@@ -5,8 +5,11 @@
         interrupted: '已中断', reclaimed: '已回收',
     };
     const PHASE_LABELS = {
-        intake: '输入', config: '配置', schedule: '调度', analysis: '分析', report: '报告',
+        intake: '文档理解 Agent', config: '配置 Agent', schedule: '调度', analysis: '分析 Agent', report: '报告 Agent',
         completed: '完成', lifecycle: '生命周期', system: '系统',
+    };
+    const CHART_PHASE_LABELS = {
+        intake: '文档理解', config: '配置生成', schedule: '资源调度', analysis: '证据分析', report: '报告生成',
     };
     const TIER_LABELS = { cloud: '云', edge: '边', device: '端' };
     const PHASE_PROGRESS = { intake: 4, config: 24, schedule: 58, analysis: 84, report: 96, completed: 100 };
@@ -204,7 +207,7 @@
         if (!window.cytoscape) return;
         if (state.cy) state.cy.destroy();
         const positions = workflowPositions();
-        const labels = { intake: '输入归档', config: '形成配置', schedule: '资源调度', analysis: '运行分析', report: '生成报告', retain: '保留资源' };
+        const labels = { intake: '文档理解 Agent', config: '配置 Agent', schedule: '资源调度', analysis: '分析 Agent', report: '报告 Agent', retain: '保留资源' };
         const nodes = Object.keys(labels).map(id => ({
             data: { id, label: labels[id], state: phaseState(workspace, id) }, position: positions[id],
         }));
@@ -215,14 +218,14 @@
             container: $('#workflowGraph'), elements: [...nodes, ...edgePairs.map((pair, index) => ({ data: { id: `e${index}`, source: pair[0], target: pair[1] } }))],
             layout: { name: 'preset', fit: false }, minZoom: 1, maxZoom: 1, userZoomingEnabled: false, userPanningEnabled: false,
             style: [
-                { selector: 'node', style: { width: 82, height: 42, shape: 'round-rectangle', 'background-color': '#f8fafc', 'border-width': 1, 'border-color': '#d9dee7', label: 'data(label)', color: '#5f6978', 'font-size': 10, 'font-family': 'sans-serif', 'text-valign': 'center', 'text-halign': 'center' } },
-                { selector: 'node[state="active"]', style: { 'background-color': '#eef2fb', 'border-width': 2, 'border-color': '#2563eb', color: '#16307a' } },
-                { selector: 'node[state="completed"]', style: { 'background-color': '#e7f7f0', 'border-color': '#0f9d6b', color: '#087453' } },
+                { selector: 'node', style: { width: 90, height: 42, shape: 'round-rectangle', 'background-color': '#fafbfa', 'border-width': 1, 'border-color': '#dce4df', label: 'data(label)', color: '#657069', 'font-size': 10, 'font-family': 'sans-serif', 'text-valign': 'center', 'text-halign': 'center' } },
+                { selector: 'node[state="active"]', style: { 'background-color': '#eef9f3', 'border-width': 2, 'border-color': '#168557', color: '#0b633d' } },
+                { selector: 'node[state="completed"]', style: { 'background-color': '#e9f7ef', 'border-color': '#25a86b', color: '#0f754b' } },
                 { selector: 'node[state="retained"]', style: { 'background-color': '#fdf4e3', 'border-color': '#d08a16', color: '#9a6208' } },
-                { selector: 'node[state="reclaimed"]', style: { 'background-color': '#f1f4f9', 'border-color': '#9aa2ae', color: '#6b7480' } },
-                { selector: 'node[state="skipped"]', style: { 'background-color': '#f8fafc', 'border-style': 'dashed', color: '#9aa2ae' } },
+                { selector: 'node[state="reclaimed"]', style: { 'background-color': '#f0f3f1', 'border-color': '#9ba39e', color: '#747d77' } },
+                { selector: 'node[state="skipped"]', style: { 'background-color': '#fafbfa', 'border-style': 'dashed', color: '#9ba39e' } },
                 { selector: 'node[state="failed"]', style: { 'background-color': '#fdecec', 'border-color': '#dc2626', color: '#b91c1c' } },
-                { selector: 'edge', style: { width: 1.5, 'line-color': '#cbd3df', 'target-arrow-color': '#8b96a8', 'target-arrow-shape': 'triangle', 'curve-style': 'bezier' } },
+                { selector: 'edge', style: { width: 1.5, 'line-color': '#cad5ce', 'target-arrow-color': '#87948d', 'target-arrow-shape': 'triangle', 'curve-style': 'bezier' } },
             ],
         });
     }
@@ -269,14 +272,14 @@
             animationDuration: 350, grid: { left: 48, right: 12, top: 12, bottom: 22 },
             tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
             xAxis: { type: 'value', name: '秒', nameTextStyle: { fontSize: 9 }, axisLabel: { fontSize: 9 }, splitLine: { lineStyle: { color: '#edf0f4' } } },
-            yAxis: { type: 'category', data: durations.map(item => PHASE_LABELS[item.phase] || item.phase), axisLabel: { fontSize: 9 }, axisTick: { show: false }, axisLine: { show: false } },
-            series: [{ type: 'bar', data: durations.map(item => item.seconds), barWidth: 12, itemStyle: { color: '#2563eb', borderRadius: [0, 3, 3, 0] } }],
+            yAxis: { type: 'category', data: durations.map(item => CHART_PHASE_LABELS[item.phase] || item.phase), axisLabel: { fontSize: 9 }, axisTick: { show: false }, axisLine: { show: false } },
+            series: [{ type: 'bar', data: durations.map(item => item.seconds), barWidth: 12, itemStyle: { color: '#168557', borderRadius: [0, 3, 3, 0] } }],
         }, true);
         const counts = ['cloud', 'edge', 'device'].map(tier => ({
             name: TIER_LABELS[tier], value: placements.filter(item => item.node_type === tier).length,
         }));
         state.resourceChart.setOption({
-            animationDuration: 350, color: ['#2563eb', '#7c3aed', '#d97706'],
+            animationDuration: 350, color: ['#187c73', '#527d47', '#b36b18'],
             tooltip: { trigger: 'item' }, legend: { bottom: 0, itemWidth: 8, itemHeight: 8, textStyle: { fontSize: 9 } },
             series: [{ type: 'pie', radius: ['42%', '67%'], center: ['50%', '43%'], label: { fontSize: 9, formatter: '{b} {c}' }, data: counts }],
         }, true);

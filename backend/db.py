@@ -797,6 +797,18 @@ def create_experiment(user_id: int, name: str, description: str = "") -> dict:
         return dict(cur.fetchone())
 
 
+def update_experiment(exp_id: int, name: str, description: str = "") -> dict | None:
+    name = (name or "").strip() or "未命名实验"
+    with cursor() as cur:
+        cur.execute(
+            "UPDATE experiments SET name=?, description=? WHERE id=?",
+            (name, description or "", exp_id),
+        )
+        cur.execute("SELECT * FROM experiments WHERE id=?", (exp_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
 def get_experiment(exp_id: int) -> dict | None:
     with cursor() as cur:
         cur.execute(

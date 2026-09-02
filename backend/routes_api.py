@@ -475,8 +475,6 @@ def paper_workspaces():
 @auth.login_required
 def create_paper_workspace():
     u = request.current_user
-    goal = (request.form.get("goal") or "").strip()[:4000]
-    name = (request.form.get("name") or "").strip()[:120]
     mode = (request.form.get("mode") or "").strip()
     files = [item for item in request.files.getlist("files") if item and item.filename]
     if mode not in {"resources", "full"}:
@@ -485,14 +483,11 @@ def create_paper_workspace():
         return jsonify({"error": "请至少上传一个输入文件"}), 400
     if len(files) > 8:
         return jsonify({"error": "单次工作区最多上传 8 个文件"}), 400
-    input_names = [item.filename.replace("\\", "/").rsplit("/", 1)[-1][:255] for item in files]
-    if not goal:
-        goal = f"根据输入文件 {', '.join(input_names)} 形成配置、完成调度并产出实验记录"
     timestamp = time.strftime("%m%d-%H%M")
-    first_stem = os.path.splitext(input_names[0])[0].strip()[:72] or "论文实验"
-    workspace_name = name or f"{first_stem}-{timestamp}"
+    workspace_name = f"正在理解输入-{timestamp}"
+    goal = "正在由文档理解 Agent 阅读文件正文并生成实验目标"
     experiment = db.create_experiment(
-        u["id"], workspace_name, f"论文工作区：{goal[:240]}"
+        u["id"], workspace_name, "论文工作区：等待文档理解 Agent 生成实验元信息"
     )
     workspace = db.create_paper_workspace(
         u["id"], experiment["id"], workspace_name, goal, mode, {}

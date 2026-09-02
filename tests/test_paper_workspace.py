@@ -1,13 +1,87 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
-from backend import auth, db, paper_jobs
+from backend import auth, db, paper_agents, paper_jobs
 from backend.app import create_app
+
+
+def fake_documents(_files):
+    return [{
+        "name": "design.yaml", "content_type": "application/yaml", "size": 100,
+        "text": "正文：验证云边协同推理", "truncated": False, "extraction_issue": None,
+    }]
+
+
+def fake_intelligence(_documents):
+    return {
+        "title": "正文理解生成的云边协同实验",
+        "goal": "根据正文验证云边协同推理链路",
+        "summary": "从上传正文识别出的实验摘要",
+        "domain": "云边协同",
+        "acceptance_criteria": ["资源按层级成功调度"],
+        "ambiguities": ["未提供负载命令"],
+        "assumptions": ["采用最小资源配套"],
+        "agent_trace": {"agent": "文档理解 Agent", "model": "test-model"},
+    }
+
+
+def fake_configuration(_documents, _intelligence, rule_evidence, mode):
+    resources = rule_evidence["resources"] or [{
+        "tier": "edge", "count": 1, "arch": "arm64", "image": "ubuntu:22.04",
+        "cpu": "500m", "memory": "512Mi", "gpu": 0,
+    }]
+    return {
+        "resources": [{**row, "reason": "正文与规则证据"} for row in resources],
+        "workflow_steps": ["配置资源", "提交调度"],
+        "analysis_plan": ["核验调度证据"] if mode == "full" else [],
+        "assumptions": ["使用最小请求量"],
+        "agent_trace": {"agent": "配置 Agent", "model": "test-model"},
+    }
+
+
+def fake_analysis(_configuration, schedule, _events, retry=0):
+    created = schedule.get("created", 0)
+    requested = schedule.get("requested", 0)
+    return {
+        "verdict": "needs_attention",
+        "summary": "调度已完成，但正文未提供工作负载执行命令。",
+        "checks": [{
+            "name": "调度证据", "passed": created == requested,
+            "detail": f"已创建 {created}/{requested}", "evidence": "Kubernetes 调度返回值",
+        }],
+        "risks": ["尚未验证工作负载效果"],
+        "recommendations": ["补充运行命令后重试分析"],
+        "analysed_at": 1,
+        "agent_trace": {"agent": "分析 Agent", "model": "test-model", "retry": retry},
+    }
+
+
+def fake_report(workspace):
+    return (
+        f"# {workspace['name']} 实验报告\n\n"
+        "## 实验摘要\n\n这是由报告 Agent 根据测试证据生成的 Markdown 报告。\n\n"
+        "## 风险\n\n尚未验证工作负载效果，资源等待用户手动回收。",
+        {"agent": "报告 Agent", "model": "test-model"},
+    )
+
+
+def agent_patches(**overrides):
+    values = {
+        "extract_documents": fake_documents,
+        "run_intent_agent": fake_intelligence,
+        "run_config_agent": fake_configuration,
+        "run_analysis_agent": fake_analysis,
+        "run_report_agent": fake_report,
+    }
+    values.update(overrides)
+    return mock.patch.multiple("backend.paper_jobs.paper_agents", **values)
 
 
 class TemporaryDatabaseTest(unittest.TestCase):
@@ -20,6 +94,94 @@ class TemporaryDatabaseTest(unittest.TestCase):
     def tearDown(self):
         db.DB_PATH = self.old_db_path
         self.temp_dir.cleanup()
+
+
+class PaperAgentAdapterTest(unittest.TestCase):
+    def test_intent_agent_accepts_fenced_json_and_validates_metadata(self):
+        response = SimpleNamespace(
+            content="""```json
+{"title":"正文标题","goal":"验证正文目标","summary":"正文摘要","domain":"边缘计算",
+ "acceptance_criteria":["成功调度"],"ambiguities":[],"assumptions":["最小配置"]}
+```""",
+            usage_metadata={"input_tokens": 10, "output_tokens": 20},
+            response_metadata={"finish_reason": "stop"},
+        )
+        llm = mock.Mock()
+        llm.invoke.return_value = response
+        with mock.patch("backend.paper_agents._make_llm", return_value=llm):
+            result = paper_agents.run_intent_agent(fake_documents([]))
+
+        self.assertEqual(result["title"], "正文标题")
+        self.assertEqual(result["agent_trace"]["usage"]["output_tokens"], 20)
+        prompt_payload = json.loads(llm.invoke.call_args.args[0][1].content)
+        self.assertIn("验证云边协同推理", prompt_payload["documents"][0]["text"])
+
+    def test_analysis_agent_does_not_send_ssh_secrets_to_model(self):
+        response = SimpleNamespace(
+            content=json.dumps({
+                "verdict": "needs_attention",
+                "summary": "只验证了调度",
+                "checks": [{
+                    "name": "调度", "passed": True, "detail": "已落位", "evidence": "Pod 返回值",
+                }],
+                "risks": ["未运行负载"],
+                "recommendations": ["补充命令"],
+            }, ensure_ascii=False),
+            usage_metadata={}, response_metadata={},
+        )
+        llm = mock.Mock()
+        llm.invoke.return_value = response
+        schedule = {
+            "requested": 1, "created": 1,
+            "placements": [{
+                "pod_name": "unit-a", "node": "edge-1", "ssh_password": "top-secret",
+                "ssh_command": "ssh root@example", "token": "private-token",
+            }],
+        }
+        with mock.patch("backend.paper_agents._make_llm", return_value=llm):
+            result = paper_agents.run_analysis_agent({}, schedule, [])
+
+        serialized_prompt = llm.invoke.call_args.args[0][1].content
+        self.assertEqual(result["verdict"], "needs_attention")
+        self.assertNotIn("top-secret", serialized_prompt)
+        self.assertNotIn("private-token", serialized_prompt)
+        self.assertNotIn("ssh root@example", serialized_prompt)
+
+    def test_json_agent_retries_once_when_model_format_is_invalid(self):
+        valid = json.dumps({
+            "title": "修复后的标题", "goal": "修复后的目标", "summary": "修复后的摘要",
+            "domain": "系统", "acceptance_criteria": ["合法 JSON"],
+            "ambiguities": [], "assumptions": [],
+        }, ensure_ascii=False)
+        llm = mock.Mock()
+        llm.invoke.side_effect = [
+            SimpleNamespace(content='{"title": "缺少结尾"', usage_metadata={}, response_metadata={}),
+            SimpleNamespace(content=valid, usage_metadata={}, response_metadata={}),
+        ]
+        with mock.patch("backend.paper_agents._make_llm", return_value=llm):
+            result = paper_agents.run_intent_agent(fake_documents([]))
+
+        self.assertEqual(result["title"], "修复后的标题")
+        self.assertEqual(result["agent_trace"]["attempts"], 2)
+        self.assertTrue(result["agent_trace"]["format_repaired"])
+        self.assertEqual(llm.invoke.call_count, 2)
+
+    def test_analysis_guardrail_rejects_passed_verdict_with_open_risks(self):
+        response = SimpleNamespace(
+            content=json.dumps({
+                "verdict": "passed", "summary": "调度成功但负载未验证",
+                "checks": [{"name": "调度", "passed": True, "detail": "已落位", "evidence": "Pod"}],
+                "risks": ["工作负载未运行"], "recommendations": ["运行负载"],
+            }, ensure_ascii=False),
+            usage_metadata={}, response_metadata={},
+        )
+        llm = mock.Mock()
+        llm.invoke.return_value = response
+        with mock.patch("backend.paper_agents._make_llm", return_value=llm):
+            result = paper_agents.run_analysis_agent({}, {"placements": []}, [])
+
+        self.assertEqual(result["verdict"], "needs_attention")
+        self.assertIn("verdict_guardrail", result["agent_trace"])
 
 
 class PaperWorkspaceJobTest(TemporaryDatabaseTest):
@@ -70,7 +232,7 @@ class PaperWorkspaceJobTest(TemporaryDatabaseTest):
                 "gpu": kwargs["gpu"],
             }
 
-        with mock.patch("backend.paper_jobs.k8s_client.create_ssh_pod", side_effect=fake_create), mock.patch(
+        with agent_patches(), mock.patch("backend.paper_jobs.k8s_client.create_ssh_pod", side_effect=fake_create), mock.patch(
             "backend.paper_jobs.k8s_client.delete_pods_by_experiment"
         ) as delete_resources, mock.patch("backend.paper_jobs.task_events.publish_task"):
             paper_jobs._execute_workspace(workspace["id"], task["id"], user, "203.0.113.30")
@@ -79,8 +241,12 @@ class PaperWorkspaceJobTest(TemporaryDatabaseTest):
         self.assertEqual(completed["status"], "completed")
         self.assertEqual(completed["stage"], "completed")
         self.assertEqual(completed["schedule_json"]["created"], 2)
-        self.assertEqual(completed["analysis_json"]["verdict"], "passed")
-        self.assertIn("# 跨架构实验 实验报告", completed["report_md"])
+        self.assertEqual(completed["name"], "正文理解生成的云边协同实验")
+        self.assertEqual(completed["goal"], "根据正文验证云边协同推理链路")
+        self.assertEqual(completed["analysis_json"]["verdict"], "needs_attention")
+        self.assertEqual(completed["config_json"]["document_intelligence"]["domain"], "云边协同")
+        self.assertEqual(db.get_experiment(experiment["id"])["name"], completed["name"])
+        self.assertIn("# 正文理解生成的云边协同实验 实验报告", completed["report_md"])
         self.assertFalse(completed["resources_reclaimed"])
         self.assertTrue(any(event["event_type"] == "placement" for event in completed["events"]))
         delete_resources.assert_not_called()
@@ -104,7 +270,7 @@ class PaperWorkspaceJobTest(TemporaryDatabaseTest):
             "image": "ubuntu:22.04", "ssh_port": 31000, "ssh_user": "root", "ssh_password": "test",
             "ssh_command": "ssh test", "experiment_id": experiment["id"], "gpu": 0,
         }
-        with mock.patch(
+        with agent_patches(), mock.patch(
             "backend.paper_jobs.k8s_client.create_ssh_pod", side_effect=[placement, RuntimeError("capacity exhausted")]
         ), mock.patch("backend.paper_jobs.task_events.publish_task"):
             paper_jobs._execute_workspace(workspace["id"], task["id"], user, "203.0.113.31")
@@ -113,6 +279,63 @@ class PaperWorkspaceJobTest(TemporaryDatabaseTest):
         self.assertEqual(failed["status"], "failed")
         self.assertEqual(failed["schedule_json"]["created"], 1)
         self.assertTrue(failed["schedule_json"]["resources_retained"])
+
+    def test_llm_failure_is_visible_and_does_not_schedule(self):
+        user, _ = auth.create_user("agent-failure", "secret123")
+        experiment = db.create_experiment(user["id"], "临时实验")
+        workspace = db.create_paper_workspace(
+            user["id"], experiment["id"], "等待理解", "等待理解", "full", {}
+        )
+        path = os.path.join(self.temp_dir.name, "input.md")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("# 一个真实实验需求")
+        db.add_paper_workspace_file(
+            workspace["id"], user["id"], "input.md", path, os.path.getsize(path), "text/markdown"
+        )
+        task = db.create_execution_task(user["id"], experiment["id"], "paper", "等待理解")
+
+        failure = paper_jobs.paper_agents.PaperAgentError("文档理解 Agent 大模型调用失败：timeout")
+        with agent_patches(run_intent_agent=mock.Mock(side_effect=failure)), mock.patch(
+            "backend.paper_jobs.k8s_client.create_ssh_pod"
+        ) as create_pod, mock.patch("backend.paper_jobs.task_events.publish_task"):
+            paper_jobs._execute_workspace(workspace["id"], task["id"], user, "203.0.113.32")
+
+        failed = db.get_paper_workspace(workspace["id"], user_id=user["id"])
+        self.assertEqual(failed["status"], "failed")
+        self.assertEqual(failed["stage"], "intake")
+        self.assertIn("大模型调用失败", failed["events"][-1]["content"])
+        create_pod.assert_not_called()
+
+    def test_analysis_retry_calls_analysis_and_report_agents_again(self):
+        user, _ = auth.create_user("retry-agent", "secret123")
+        experiment = db.create_experiment(user["id"], "重试实验")
+        workspace = db.create_paper_workspace(
+            user["id"], experiment["id"], "重试实验", "重新评估证据", "full", {}
+        )
+        db.update_paper_workspace(
+            workspace["id"], status="completed", stage="completed",
+            config_json={"resources": [{"tier": "edge", "count": 1}]},
+            schedule_json={"requested": 1, "created": 1, "placements": []},
+            analysis_json={"verdict": "needs_attention"}, report_md="# old",
+        )
+        task = db.create_execution_task(user["id"], experiment["id"], "paper_analysis", "重新分析")
+        analyse = mock.Mock(side_effect=fake_analysis)
+        report = mock.Mock(side_effect=fake_report)
+
+        with agent_patches(run_analysis_agent=analyse, run_report_agent=report), mock.patch(
+            "backend.paper_jobs.task_events.publish_task"
+        ):
+            paper_jobs._execute_analysis_retry(
+                workspace["id"], task["id"], user, "203.0.113.33"
+            )
+
+        completed = db.get_paper_workspace(workspace["id"], user_id=user["id"])
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(completed["retries"], 1)
+        self.assertEqual(analyse.call_count, 1)
+        self.assertEqual(analyse.call_args.kwargs["retry"], 1)
+        self.assertEqual(report.call_count, 1)
+        self.assertNotEqual(completed["report_md"], "# old")
 
 
 class PaperWorkspaceApiTest(TemporaryDatabaseTest):
@@ -163,8 +386,8 @@ class PaperWorkspaceApiTest(TemporaryDatabaseTest):
         workspace = response.get_json()["workspace"]
         self.assertEqual(workspace["mode"], "full")
         self.assertEqual(len(workspace["files"]), 2)
-        self.assertTrue(workspace["name"].startswith("main-"))
-        self.assertIn("main.py", workspace["goal"])
+        self.assertTrue(workspace["name"].startswith("正在理解输入-"))
+        self.assertIn("文档理解 Agent", workspace["goal"])
         self.assertTrue(db.get_experiment(workspace["experiment_id"]))
         with self.client.session_transaction() as session:
             self.assertEqual(session["current_experiment_id"], workspace["experiment_id"])
