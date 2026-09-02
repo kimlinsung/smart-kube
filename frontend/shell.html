@@ -2,6 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>智能云边端调度系统 · Web Shell</title>
 <link rel="stylesheet" href="/css/style.css" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
@@ -10,14 +11,21 @@
 </head>
 <body>
 <div class="shell-wrap">
-    <div class="shell-bar">
-        <div>🖥 <span id="podName"></span></div>
-        <div>
-            <a href="javascript:history.back()">返回</a>
-            <span id="status" style="margin-left:12px;">连接中...</span>
-        </div>
+  <div class="shell-bar">
+    <div class="sb-left">
+      <span class="dot3"><i></i><i></i><i></i></span>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#93c5fd" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
+      <span class="sb-pod" id="podName"></span>
     </div>
-    <div id="term"></div>
+    <div class="sb-right">
+      <span class="shell-status" id="status">连接中…</span>
+      <a href="javascript:history.back()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        返回
+      </a>
+    </div>
+  </div>
+  <div id="term"></div>
 </div>
 
 <script>
@@ -31,40 +39,30 @@ const term = new Terminal({
     cursorBlink: true,
     fontFamily: 'ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace',
     fontSize: 13,
-    theme: {
-        background: '#0a0e1a',
-        foreground: '#e2e8f0',
-        cursor: '#e2e8f0',
-        selectionBackground: '#334155',
-    },
+    theme: { background: '#0a0e1a', foreground: '#e2e8f0', cursor: '#e2e8f0', selectionBackground: '#334155' },
 });
 const fit = new FitAddon.FitAddon();
 term.loadAddon(fit);
 term.open(termEl);
 fit.fit();
 term.focus();
-
 window.addEventListener('resize', () => { try { fit.fit(); } catch (_) {} });
+
+function setStatus(text, cls) { status.textContent = text; status.className = 'shell-status' + (cls ? ' ' + cls : ''); }
 
 if (!pod) {
     term.write('\x1b[31m缺少 pod 参数\x1b[0m\r\n');
+    setStatus('参数缺失', 'off');
 } else {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${location.host}/ws/shell/${encodeURIComponent(pod)}`);
     ws.binaryType = 'arraybuffer';
     const decoder = new TextDecoder('utf-8');
-
-    ws.onopen = () => { status.textContent = '已连接'; status.style.color = '#34d399'; };
-    ws.onclose = () => { status.textContent = '已断开'; status.style.color = '#f87171'; };
-    ws.onerror = () => { status.textContent = '连接错误'; status.style.color = '#f87171'; };
-    ws.onmessage = e => {
-        const data = typeof e.data === 'string' ? e.data : decoder.decode(new Uint8Array(e.data));
-        term.write(data);
-    };
-
-    term.onData(data => {
-        if (ws.readyState === WebSocket.OPEN) ws.send(data);
-    });
+    ws.onopen = () => setStatus('已连接', 'on');
+    ws.onclose = () => setStatus('已断开', 'off');
+    ws.onerror = () => setStatus('连接错误', 'off');
+    ws.onmessage = e => { const data = typeof e.data === 'string' ? e.data : decoder.decode(new Uint8Array(e.data)); term.write(data); };
+    term.onData(data => { if (ws.readyState === WebSocket.OPEN) ws.send(data); });
 }
 </script>
 </body>

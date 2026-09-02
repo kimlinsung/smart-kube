@@ -2,147 +2,134 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>智能云边端调度系统 · 集群管理</title>
 <link rel="stylesheet" href="/css/style.css" />
 </head>
-<body>
-<div class="topbar" id="topbar"></div>
-<div class="container">
+<body data-page="admin">
+<div class="layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <div class="main">
+    <header class="topbar" id="topbar"></header>
+    <div class="content">
 
-    <div class="card">
-        <h2>集群节点
-            <button id="refreshNodes" class="btn-sm btn-ghost">刷新</button>
-        </h2>
-        <table>
-            <thead><tr>
-                <th>名称</th><th>节点类型</th><th>hostname</th><th>架构</th><th>OS</th><th>Ready</th>
-                <th>IP</th><th>version</th><th>操作</th>
-            </tr></thead>
+      <div class="card">
+        <div class="card-head">
+          <h2><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/></svg>集群节点</h2>
+          <div class="right"><button id="refreshNodes" class="btn-sm btn-ghost">刷新</button></div>
+        </div>
+        <div class="card-body flush">
+          <table>
+            <thead><tr><th>名称</th><th>节点类型</th><th>hostname</th><th>架构</th><th>OS</th><th>Ready</th><th>IP</th><th>version</th><th>操作</th></tr></thead>
             <tbody id="nodesBody"></tbody>
-        </table>
-    </div>
+          </table>
+        </div>
+      </div>
 
-    <div class="card">
-        <h2>所有用户的 Units</h2>
-        <table>
-            <thead><tr>
-                <th>名称</th><th>所属</th><th>状态</th><th>节点类型</th><th>节点</th><th>架构</th><th>类型</th><th>操作</th>
-            </tr></thead>
+      <div class="card">
+        <div class="card-head">
+          <h2><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5 9 5 9-5zM3 8v8l9 5 9-5V8"/></svg>所有用户的 Units</h2>
+        </div>
+        <div class="card-body flush">
+          <table>
+            <thead><tr><th>名称</th><th>所属</th><th>状态</th><th>节点类型</th><th>节点</th><th>架构</th><th>类型</th><th>操作</th></tr></thead>
             <tbody id="podsBody"></tbody>
-        </table>
-    </div>
+          </table>
+        </div>
+      </div>
 
-    <div class="card">
-        <h2>用户管理</h2>
-        <div class="form-row">
+      <div class="card">
+        <div class="card-head">
+          <h2><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/></svg>用户管理</h2>
+        </div>
+        <div class="card-body">
+          <div class="form-row">
             <span class="label">新建用户</span>
             <input id="nu" placeholder="用户名" />
             <input id="np" placeholder="密码" type="password" />
-            <select id="nr">
-                <option value="user">普通用户</option>
-                <option value="admin">管理员</option>
-            </select>
+            <select id="nr"><option value="user">普通用户</option><option value="admin">管理员</option></select>
             <button id="createUser" class="primary btn-sm">创建</button>
-        </div>
-        <table>
-            <thead><tr>
-                <th>ID</th><th>用户名</th><th>角色</th><th>创建时间</th><th>操作</th>
-            </tr></thead>
+          </div>
+          <table>
+            <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>创建时间</th><th>操作</th></tr></thead>
             <tbody id="usersBody"></tbody>
-        </table>
-    </div>
+          </table>
+        </div>
+      </div>
 
+    </div>
+  </div>
 </div>
+
 <script src="/js/api.js"></script>
 <script src="/js/app.js"></script>
 <script src="/js/chat.js"></script>
 <script>
 function renderNodeRow(n) {
     const readyBadge = n.ready === 'True'
-        ? '<span class="badge badge-green">Ready</span>'
-        : `<span class="badge badge-red">${n.ready}</span>`;
+        ? '<span class="badge dot badge-green">Ready</span>'
+        : `<span class="badge dot badge-red">${escapeHtml(n.ready)}</span>`;
     const cordonBadge = n.unschedulable ? ' <span class="badge badge-yellow">封锁</span>' : '';
     const cordonBtn = n.unschedulable
-        ? `<button data-act="uncordon" data-name="${n.name}">解封</button>`
-        : `<button data-act="cordon" data-name="${n.name}">封锁</button>`;
+        ? `<button data-act="uncordon" data-name="${escapeHtml(n.name)}">解封</button>`
+        : `<button data-act="cordon" data-name="${escapeHtml(n.name)}">封锁</button>`;
     return `
-        <td><code>${n.name}</code></td>
+        <td><code>${escapeHtml(n.name)}</code></td>
         <td>${badgeNodeType(n.node_type)}</td>
-        <td>${n.hostname||'-'}</td>
-        <td>${n.arch||'-'}</td>
-        <td>${n.os||'-'}</td>
+        <td>${escapeHtml(n.hostname||'-')}</td>
+        <td>${escapeHtml(n.arch||'-')}</td>
+        <td>${escapeHtml(n.os||'-')}</td>
         <td>${readyBadge}${cordonBadge}</td>
-        <td>${n.internal_ip||'-'}</td>
-        <td style="font-size:12px;">${n.kubelet_version||'-'}</td>
-        <td class="row-actions">
-            ${cordonBtn}
-            <button class="danger" data-act="del" data-name="${n.name}">删除节点</button>
-        </td>`;
+        <td>${escapeHtml(n.internal_ip||'-')}</td>
+        <td style="font-size:12px;">${escapeHtml(n.kubelet_version||'-')}</td>
+        <td><div class="row-actions">${cordonBtn}<button class="danger" data-act="del" data-name="${escapeHtml(n.name)}">删除</button></div></td>`;
 }
-
 async function loadNodes() {
     const body = document.getElementById('nodesBody');
-    body.innerHTML = '<tr><td colspan="9">加载中...</td></tr>';
+    body.innerHTML = '<tr class="loading-row"><td colspan="9"><span class="spinner"></span> 加载中…</td></tr>';
     try {
         const r = await API.adminNodes();
         body.innerHTML = '';
         groupByNodeType(r.nodes).forEach(({ type, items }) => {
             body.insertAdjacentHTML('beforeend', ntGroupHeaderHTML(type, items.length, 9));
-            items.forEach(n => {
-                const tr = document.createElement('tr');
-                tr.innerHTML = renderNodeRow(n);
-                body.appendChild(tr);
-            });
+            items.forEach(n => { const tr = document.createElement('tr'); tr.innerHTML = renderNodeRow(n); body.appendChild(tr); });
         });
-        if (!r.nodes.length) body.innerHTML = '<tr><td colspan="9" style="color:#6b7280">暂无节点</td></tr>';
-    } catch (e) {
-        body.innerHTML = `<tr><td colspan="9" style="color:#dc2626">加载失败：${e.message}</td></tr>`;
-    }
+        if (!r.nodes.length) body.innerHTML = '<tr><td colspan="9" style="color:var(--muted)">暂无节点</td></tr>';
+    } catch (e) { body.innerHTML = `<tr><td colspan="9" style="color:var(--danger)">加载失败：${escapeHtml(e.message)}</td></tr>`; }
 }
 document.getElementById('nodesBody').addEventListener('click', async e => {
     const btn = e.target.closest('button'); if (!btn) return;
     const { act, name } = btn.dataset;
-    if (act === 'del') {
-        if (!confirm(`确认从集群删除节点 ${name}？此操作不可逆。`)) return;
-        try { await API.adminDeleteNode(name); loadNodes(); } catch (err) { alert(err.message); }
-    } else if (act === 'cordon') {
-        if (!confirm(`封锁节点 ${name}？封锁后不再接受新 Units 调度（现有 Units 不受影响）。`)) return;
-        try { await API.adminCordonNode(name); loadNodes(); } catch (err) { alert(err.message); }
-    } else if (act === 'uncordon') {
-        try { await API.adminUncordonNode(name); loadNodes(); } catch (err) { alert(err.message); }
-    }
+    if (act === 'del') { if (!confirm(`确认从集群删除节点 ${name}？此操作不可逆。`)) return; try { await API.adminDeleteNode(name); loadNodes(); } catch (err) { alert(err.message); } }
+    else if (act === 'cordon') { if (!confirm(`封锁节点 ${name}？封锁后不再接受新 Units 调度。`)) return; try { await API.adminCordonNode(name); loadNodes(); } catch (err) { alert(err.message); } }
+    else if (act === 'uncordon') { try { await API.adminUncordonNode(name); loadNodes(); } catch (err) { alert(err.message); } }
 });
 
 async function loadAllPods(silent = false) {
     const body = document.getElementById('podsBody');
-    if (!silent) body.innerHTML = '<tr><td colspan="8">加载中...</td></tr>';
+    if (!silent) body.innerHTML = '<tr class="loading-row"><td colspan="8"><span class="spinner"></span> 加载中…</td></tr>';
     try {
         const r = await API.adminPods();
         body.innerHTML = '';
-        if (!r.pods.length) {
-            body.innerHTML = '<tr><td colspan="8" style="color:#6b7280">暂无 Units</td></tr>';
-            return;
-        }
+        if (!r.pods.length) { body.innerHTML = '<tr><td colspan="8" style="color:var(--muted)">暂无 Units</td></tr>'; return; }
         groupByNodeType(r.pods).forEach(({ type, items }) => {
             body.insertAdjacentHTML('beforeend', ntGroupHeaderHTML(type, items.length, 8));
             items.forEach(p => {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-                    <td><code>${p.name}</code></td>
-                    <td>${p.owner_username||'-'}</td>
+                    <td><code>${escapeHtml(p.name)}</code></td>
+                    <td>${escapeHtml(p.owner_username||'-')}</td>
                     <td>${badgePhase(p.phase, p.name)}</td>
                     <td>${badgeNodeType(p.node_type)}</td>
-                    <td>${p.node||'-'}</td>
-                    <td>${p.arch||'-'}</td>
-                    <td><span class="badge badge-blue">${p.kind||'-'}</span></td>
-                    <td class="row-actions"><button class="danger" data-name="${p.name}">删除</button></td>`;
+                    <td>${escapeHtml(p.node||'-')}</td>
+                    <td>${escapeHtml(p.arch||'-')}</td>
+                    <td><span class="badge badge-blue">${escapeHtml(p.kind||'-')}</span></td>
+                    <td><div class="row-actions"><button class="danger" data-name="${escapeHtml(p.name)}">删除</button></div></td>`;
                 body.appendChild(tr);
             });
         });
         bindPhaseHover(body);
-    } catch (e) {
-        if (!silent) body.innerHTML = `<tr><td colspan="8" style="color:#dc2626">${e.message}</td></tr>`;
-    }
+    } catch (e) { if (!silent) body.innerHTML = `<tr><td colspan="8" style="color:var(--danger)">${escapeHtml(e.message)}</td></tr>`; }
 }
 document.getElementById('podsBody').addEventListener('click', async e => {
     const btn = e.target.closest('button'); if (!btn) return;
@@ -154,7 +141,7 @@ document.getElementById('podsBody').addEventListener('click', async e => {
 let MY_ID = null;
 async function loadUsers() {
     const body = document.getElementById('usersBody');
-    body.innerHTML = '<tr><td colspan="5">加载中...</td></tr>';
+    body.innerHTML = '<tr class="loading-row"><td colspan="5"><span class="spinner"></span> 加载中…</td></tr>';
     try {
         const r = await API.adminUsers();
         body.innerHTML = '';
@@ -163,33 +150,27 @@ async function loadUsers() {
             const isSelf = u.id === MY_ID;
             const toggleRole = u.role === 'admin' ? 'user' : 'admin';
             const toggleLabel = u.role === 'admin' ? '降为普通用户' : '设为管理员';
-            const roleBtn = isSelf ? ''
-                : `<button data-act="role" data-id="${u.id}" data-name="${u.username}" data-role="${toggleRole}">${toggleLabel}</button>`;
+            const roleBtn = isSelf ? '' : `<button data-act="role" data-id="${u.id}" data-name="${escapeHtml(u.username)}" data-role="${toggleRole}">${toggleLabel}</button>`;
             tr.innerHTML = `
                 <td>${u.id}</td>
-                <td>${u.username}</td>
+                <td>${escapeHtml(u.username)}</td>
                 <td><span class="badge ${u.role==='admin'?'badge-blue':'badge-green'}">${u.role}</span></td>
                 <td>${fmtTime(u.created_at)}</td>
-                <td class="row-actions">
-                    <button data-act="pwd" data-id="${u.id}" data-name="${u.username}">重置密码</button>
+                <td><div class="row-actions">
+                    <button data-act="pwd" data-id="${u.id}" data-name="${escapeHtml(u.username)}">重置密码</button>
                     ${roleBtn}
                     ${u.role==='admin' ? '' : `<button class="danger" data-act="del" data-id="${u.id}">删除</button>`}
-                </td>`;
+                </div></td>`;
             body.appendChild(tr);
         });
-    } catch (e) {
-        body.innerHTML = `<tr><td colspan="5" style="color:#dc2626">${e.message}</td></tr>`;
-    }
+    } catch (e) { body.innerHTML = `<tr><td colspan="5" style="color:var(--danger)">${escapeHtml(e.message)}</td></tr>`; }
 }
 document.getElementById('usersBody').addEventListener('click', async e => {
     const btn = e.target.closest('button'); if (!btn) return;
     const { act, id, name, role } = btn.dataset;
-    if (act === 'del') {
-        if (!confirm(`删除用户 ${name || id}？`)) return;
-        try { await API.adminDeleteUser(id); loadUsers(); } catch (err) { alert(err.message); }
-    } else if (act === 'pwd') {
-        const newPwd = prompt(`为用户 "${name}" 设置新密码（至少 6 位）：`);
-        if (newPwd === null) return;  // 点了取消
+    if (act === 'del') { if (!confirm(`删除用户 ${name || id}？`)) return; try { await API.adminDeleteUser(id); loadUsers(); } catch (err) { alert(err.message); } }
+    else if (act === 'pwd') {
+        const newPwd = prompt(`为用户 "${name}" 设置新密码（至少 6 位）：`); if (newPwd === null) return;
         if (newPwd.length < 6) { alert('密码长度不能少于 6 位'); return; }
         try { await API.adminChangePassword(id, newPwd); alert('密码已修改'); } catch (err) { alert(err.message); }
     } else if (act === 'role') {
@@ -203,14 +184,9 @@ document.getElementById('createUser').onclick = async () => {
     const p = document.getElementById('np').value;
     const r = document.getElementById('nr').value;
     if (!u || !p) return alert('用户名/密码不能为空');
-    try {
-        await API.adminCreateUser(u, p, r);
-        document.getElementById('nu').value = '';
-        document.getElementById('np').value = '';
-        loadUsers();
-    } catch (err) { alert(err.message); }
+    try { await API.adminCreateUser(u, p, r); document.getElementById('nu').value = ''; document.getElementById('np').value = ''; loadUsers(); }
+    catch (err) { alert(err.message); }
 };
-
 document.getElementById('refreshNodes').onclick = loadNodes;
 
 (async () => {

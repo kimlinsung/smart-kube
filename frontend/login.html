@@ -2,135 +2,94 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title data-i18n="login.title">Smart Cloud-Edge-Device Scheduling · Sign In</title>
 <link rel="stylesheet" href="/css/style.css" />
-<style>
-  /* 飞书登录按钮样式（不依赖外部图标库） */
-  .feishu-divider {
-      display: flex; align-items: center; gap: 10px;
-      color: #9ca3af; font-size: 12px; margin: 14px 0 10px;
-  }
-  .feishu-divider::before, .feishu-divider::after {
-      content: ""; flex: 1; height: 1px; background: #e5e7eb;
-  }
-  .btn-feishu {
-      width: 100%; padding: 10px 12px; cursor: pointer;
-      background: #3370ff; color: #fff; border: none; border-radius: 6px;
-      font-size: 14px; display: flex; justify-content: center; align-items: center; gap: 8px;
-  }
-  .btn-feishu:hover { background: #1d5cff; }
-  .btn-feishu[hidden] { display: none; }
-  .feishu-err {
-      color: #dc2626; font-size: 12px; margin-top: 8px;
-      background: #fef2f2; border: 1px solid #fecaca; padding: 6px 8px; border-radius: 4px;
-  }
-  .feishu-err[hidden] { display: none; }
-
-  /* 临时账号申请提示 */
-  .temp-acct-note {
-      margin-top: 14px;
-      padding: 12px 14px;
-      background: #eef2ff;
-      border: 1px solid #c7d2fe;
-      border-radius: 6px;
-      font-size: 12.5px;
-      line-height: 1.65;
-      color: #1e3a8a;
-      display: flex; gap: 10px; align-items: flex-start;
-  }
-  .temp-acct-note svg { flex-shrink: 0; margin-top: 1px; color: #1f3a8a; }
-  .temp-acct-note a {
-      color: #1f3a8a; font-weight: 600;
-      border-bottom: 1px dashed #93a4d6;
-  }
-  .temp-acct-note a:hover { color: #15306f; text-decoration: none; }
-  .temp-acct-note b { color: #15306f; }
-
-  /* 返回欢迎页链接（浅色背景版本） */
-  .back-home {
-      position: absolute; top: 20px; left: 24px;
-      color: #4b5563;
-      font-size: 13px;
-      display: inline-flex; align-items: center; gap: 6px;
-      padding: 6px 12px; border-radius: 6px;
-      background: #ffffff;
-      border: 1px solid #e4e6eb;
-      transition: background .15s ease, color .15s ease, border-color .15s ease;
-      z-index: 2;
-      text-decoration: none;
-  }
-  .back-home:hover {
-      color: #1f3a8a; background: #f3f4f6; border-color: #d1d5db;
-      text-decoration: none;
-  }
-
-  /* 语言切换器（浅色背景版本） */
-  .lang-switch-login {
-      position: absolute; top: 20px; right: 24px;
-      display: inline-flex; align-items: center;
-      border: 1px solid #e4e6eb;
-      background: #ffffff;
-      font-size: 12px;
-      z-index: 2;
-      overflow: hidden; border-radius: 6px;
-  }
-  .lang-switch-login a {
-      color: #6b7280; text-decoration: none;
-      padding: 6px 12px;
-      border-left: 1px solid #e4e6eb;
-      line-height: 1.1;
-  }
-  .lang-switch-login a:first-child { border-left: 0; }
-  .lang-switch-login a.active {
-      color: #ffffff; background: #1f3a8a; font-weight: 600;
-  }
-  .lang-switch-login a:not(.active):hover {
-      color: #1f3a8a; background: #f3f4f6;
-  }
-</style>
 </head>
 <body>
-<div class="login-wrap">
-    <a class="back-home" href="/welcome.html">
+<div class="auth">
+
+  <!-- 左：品牌介绍 -->
+  <div class="auth-brand">
+    <div class="auth-logo">
+      <span class="m"></span>
+      <span>智能云边端调度系统</span>
+    </div>
+
+    <div class="auth-hero">
+      <span class="tag"><span class="d"></span><span data-i18n="welcome.hero.tag">Testbed Online · Continuously Running</span></span>
+      <h2 data-i18n-html="welcome.hero.title">A Cloud-Edge-IoT Testbed<br/>for Multi-Agent Research</h2>
+      <p data-i18n="welcome.hero.subtitle">Heterogeneous Cloud-Edge-IoT Infrastructure for Multi-Agent Systems</p>
+
+      <div class="auth-feats">
+        <div class="auth-feat">
+          <span class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 12l9 4 9-4M3 17l9 4 9-4"/></svg></span>
+          <div><b data-i18n="welcome.feature.1.title">Unified scheduling for heterogeneous compute</b><span data-i18n="welcome.metric.total">x86 · ARM64 · RISC-V</span></div>
+        </div>
+        <div class="auth-feat">
+          <span class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="1"/><path d="M8 20h8M12 18v2M7 9h10M7 13h6"/></svg></span>
+          <div><b data-i18n="welcome.feature.3.title">In-browser Web Shell</b><span data-i18n="nav.devices">Interactive SSH terminal</span></div>
+        </div>
+        <div class="auth-feat">
+          <span class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a4 4 0 0 1-4 4H7l-4 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg></span>
+          <div><b data-i18n="welcome.feature.4.title">Conversational experiment orchestration</b><span data-i18n="welcome.section.cap">AI Assistant</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="foot" data-i18n="foot.copy">© Cloud-Edge-IoT Multi-Agent Testbed · For research and educational use only</div>
+  </div>
+
+  <!-- 右：登录表单 -->
+  <div class="auth-panel">
+    <div class="auth-top-actions">
+      <a class="back-home" href="/welcome.html">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
         <span data-i18n="login.back">Back to Home</span>
-    </a>
-    <span class="lang-switch-login">
+      </a>
+      <span class="lang-switch-login">
         <a href="#" data-set-lang="en">EN</a>
         <a href="#" data-set-lang="zh">中</a>
-    </span>
-    <div class="login-box">
-        <h1 data-i18n="login.h1">Smart Cloud-Edge-Device Scheduling</h1>
-        <div class="subtitle" data-i18n="login.subtitle">Cloud · Edge · Device · Unified Scheduling</div>
-
-        <!-- 飞书登录失败提示（从 ?feishu_err= 读取） -->
-        <div id="feishuErr" class="feishu-err" hidden></div>
-
-        <label data-i18n="login.label.username">Username</label>
-        <input id="u" placeholder="admin" data-i18n-attr="placeholder=login.ph.username" autofocus />
-        <label data-i18n="login.label.password">Password</label>
-        <input id="p" type="password" placeholder="admin123" data-i18n-attr="placeholder=login.ph.password" />
-        <button id="btnLogin" data-i18n="login.btn">Sign In</button>
-        <div class="err" id="err"></div>
-
-        <!-- 飞书登录入口（仅当后端启用了飞书 OAuth 时显示） -->
-        <div class="feishu-divider" id="feishuDivider" hidden><span data-i18n="login.feishu.divider">or</span></div>
-        <button id="btnFeishu" class="btn-feishu" hidden>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <path d="M3 6.5C3 5.7 3.7 5 4.5 5h15c.8 0 1.5.7 1.5 1.5v11c0 .8-.7 1.5-1.5 1.5h-15C3.7 19 3 18.3 3 17.5v-11zm2 .5v10h14V7H5zm2 2h10v2H7V9zm0 4h7v2H7v-2z"/>
-          </svg>
-          <span data-i18n="login.feishu.btn">Sign in with Feishu</span>
-        </button>
-
-        <div class="temp-acct-note">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16v12H4z"/><path d="M4 6l8 7 8-7"/></svg>
-            <div>
-                <b data-i18n="login.temp.title">Request a temporary account</b><br/>
-                <span data-i18n-html="login.temp.body">Platform accounts are created by administrators upon review. To request a <b>temporary account</b> for research, teaching or evaluation purposes, please email <a href="mailto:cppcan@163.com">cppcan@163.com</a> with a brief description of your intended use and time frame.</span>
-            </div>
-        </div>
+      </span>
     </div>
+
+    <div class="login-box">
+      <h1 data-i18n="login.h1">Smart Cloud-Edge-Device Scheduling</h1>
+      <div class="subtitle" data-i18n="login.subtitle">Cloud · Edge · Device · Unified Scheduling</div>
+
+      <div id="feishuErr" class="feishu-err" hidden></div>
+
+      <label data-i18n="login.label.username">Username</label>
+      <div class="in-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <input id="u" placeholder="admin" data-i18n-attr="placeholder=login.ph.username" autofocus />
+      </div>
+      <label data-i18n="login.label.password">Password</label>
+      <div class="in-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <input id="p" type="password" placeholder="admin123" data-i18n-attr="placeholder=login.ph.password" />
+      </div>
+      <button id="btnLogin" data-i18n="login.btn">Sign In</button>
+      <div class="err" id="err"></div>
+
+      <div class="feishu-divider" id="feishuDivider" hidden><span data-i18n="login.feishu.divider">or</span></div>
+      <button id="btnFeishu" class="btn-feishu" hidden>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 6.5C3 5.7 3.7 5 4.5 5h15c.8 0 1.5.7 1.5 1.5v11c0 .8-.7 1.5-1.5 1.5h-15C3.7 19 3 18.3 3 17.5v-11zm2 .5v10h14V7H5zm2 2h10v2H7V9zm0 4h7v2H7v-2z"/></svg>
+        <span data-i18n="login.feishu.btn">Sign in with Feishu</span>
+      </button>
+
+      <div class="temp-acct-note">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16v12H4z"/><path d="M4 6l8 7 8-7"/></svg>
+        <div>
+          <b data-i18n="login.temp.title">Request a temporary account</b><br/>
+          <span data-i18n-html="login.temp.body">Platform accounts are created by administrators upon review. To request a <b>temporary account</b> for research, teaching or evaluation purposes, please email <a href="mailto:cppcan@163.com">cppcan@163.com</a> with a brief description of your intended use and time frame.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
 </div>
+
 <script src="/js/i18n.js"></script>
 <script src="/js/api.js"></script>
 <script>
@@ -138,11 +97,9 @@ const u = document.getElementById('u');
 const p = document.getElementById('p');
 const err = document.getElementById('err');
 
-// 解析当前 URL 上的查询参数（?next=... &feishu_err=...）
 const qs = new URLSearchParams(window.location.search);
 const nextUrl = qs.get('next') || '/dashboard.html';
 
-// 1) 飞书登录回调失败时把错误显示出来
 const feishuErrText = qs.get('feishu_err');
 if (feishuErrText) {
     const box = document.getElementById('feishuErr');
@@ -151,21 +108,17 @@ if (feishuErrText) {
     box.hidden = false;
 }
 
-// 2) 账号密码登录（保留原逻辑）
 async function doLogin() {
     err.textContent = '';
-    try {
-        await API.login(u.value.trim(), p.value);
-        window.location.href = nextUrl;
-    } catch (e) { err.textContent = e.message; }
+    try { await API.login(u.value.trim(), p.value); window.location.href = nextUrl; }
+    catch (e) { err.textContent = e.message; }
 }
 document.getElementById('btnLogin').onclick = doLogin;
 p.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+u.addEventListener('keydown', e => { if (e.key === 'Enter') p.focus(); });
 
-// 3) 已登录直接跳走
-API.me().then(()=> window.location.href = nextUrl).catch(()=>{});
+API.me().then(() => window.location.href = nextUrl).catch(() => {});
 
-// 4) 探测后端是否启用飞书登录；启用了就把按钮显示出来
 fetch('/api/feishu/enabled', { credentials: 'include' })
     .then(r => r.json())
     .then(d => {
@@ -173,13 +126,10 @@ fetch('/api/feishu/enabled', { credentials: 'include' })
             document.getElementById('feishuDivider').hidden = false;
             const btn = document.getElementById('btnFeishu');
             btn.hidden = false;
-            btn.onclick = () => {
-                // 跳到后端 OAuth 入口；带上 next 让后端登录成功后跳回原页面
-                window.location.href = '/api/feishu/login?next=' + encodeURIComponent(nextUrl);
-            };
+            btn.onclick = () => { window.location.href = '/api/feishu/login?next=' + encodeURIComponent(nextUrl); };
         }
     })
-    .catch(()=>{ /* 接口异常不影响账号密码登录 */ });
+    .catch(() => {});
 </script>
 </body>
 </html>

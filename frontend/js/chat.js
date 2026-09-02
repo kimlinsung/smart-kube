@@ -1,56 +1,37 @@
-// 全局对话弹窗：所有页面通用。
+// 全局 AI 助手：右侧抽屉。所有控制台页面通用。
 
-// ---------- Markdown 渲染（marked + DOMPurify，CDN 懒加载） ----------
+// ---------- Markdown（marked + DOMPurify，CDN 懒加载，失败降级纯文本） ----------
 const MD = (() => {
     let _ready = null;
-    function _loadScript(src) {
-        return new Promise((resolve, reject) => {
+    function _load(src) {
+        return new Promise((res, rej) => {
             const s = document.createElement('script');
-            s.src = src; s.async = true;
-            s.onload = resolve; s.onerror = () => reject(new Error('load fail: ' + src));
+            s.src = src; s.async = true; s.onload = res; s.onerror = () => rej(new Error(src));
             document.head.appendChild(s);
         });
     }
-    // 确保 marked / DOMPurify 就绪；失败则降级为纯文本。
     function ready() {
         if (_ready) return _ready;
         _ready = (async () => {
             try {
-                if (!window.marked) {
-                    await _loadScript('https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js');
-                }
-                if (!window.DOMPurify) {
-                    await _loadScript('https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js');
-                }
-                if (window.marked && window.marked.setOptions) {
-                    window.marked.setOptions({ breaks: true, gfm: true });
-                }
-            } catch (e) {
-                console.warn('markdown 库加载失败，降级为纯文本：', e);
-            }
+                if (!window.marked) await _load('https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js');
+                if (!window.DOMPurify) await _load('https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js');
+                if (window.marked && window.marked.setOptions) window.marked.setOptions({ breaks: true, gfm: true });
+            } catch (e) { console.warn('markdown 库加载失败，降级纯文本：', e); }
         })();
         return _ready;
     }
-    // 同步渲染：库未就绪时先返回转义文本，稍后由调用方在 ready() 后重渲。
     function render(text) {
         const src = text == null ? '' : String(text);
         if (window.marked && window.DOMPurify) {
-            try {
-                const html = window.marked.parse(src);
-                return { html: window.DOMPurify.sanitize(html), md: true };
-            } catch (e) { /* fallthrough */ }
+            try { return { html: window.DOMPurify.sanitize(window.marked.parse(src)), md: true }; } catch (e) { /* noop */ }
         }
-        return { html: escapeHtmlLocal(src), md: false };
+        return { html: esc(src), md: false };
     }
-    function escapeHtmlLocal(s) {
-        return String(s == null ? '' : s)
-            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
+    function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
     return { ready, render };
 })();
 
-// 把 markdown 渲染进一个气泡元素（并记录原文，便于库就绪后重渲）。
 function renderBubbleMarkdown(bubble, text) {
     bubble.dataset.md = text == null ? '' : String(text);
     const { html, md } = MD.render(text);
@@ -58,91 +39,126 @@ function renderBubbleMarkdown(bubble, text) {
     bubble.classList.toggle('md', md);
 }
 
-function injectChat() {
-    // 预热 markdown 库
+const SUGGESTIONS = [
+    '创建一个 riscv 架构的 Ubuntu SSH 容器',
+    '列出我的资源',
+    '批量创建 3 个 Ubuntu SSH 容器',
+];
+
+function injectAssistant() {
     MD.ready();
 
+    // FAB
     const fab = document.createElement('button');
-    fab.className = 'chat-fab'; fab.textContent = '💬'; fab.title = 'AI 助手';
+    fab.className = 'assistant-fab'; fab.title = 'AI 助手';
+    fab.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.9L19 9.8l-5.1 1.9L12 17l-1.9-5.3L5 9.8l5.1-1.9L12 3z"/><path d="M19 15l.6 1.6L21 17l-1.4.4L19 19l-.6-1.6L17 17l1.4-.4L19 15z"/></svg>';
     document.body.appendChild(fab);
 
+    const backdrop = document.createElement('div');
+    backdrop.className = 'assistant-backdrop';
+    document.body.appendChild(backdrop);
+
     const panel = document.createElement('div');
-    panel.className = 'chat-panel';
+    panel.className = 'assistant';
     panel.innerHTML = `
-      <div class="chat-head">
-        <span>端边云(CED) Chat</span>
-        <span class="actions">
-          <button id="chatClear" title="清除上下文">清空</button>
-          <button id="chatClose">×</button>
-        </span>
+      <div class="assistant-head">
+        <span class="a-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.9L19 9.8l-5.1 1.9L12 17l-1.9-5.3L5 9.8l5.1-1.9L12 3z"/></svg></span>
+        <div class="a-tt">
+          <div class="a-title">AI 助手</div>
+          <div class="a-sub"><span class="live"></span>端边云智能编排 · 在线</div>
+        </div>
+        <div class="a-actions">
+          <button id="aClear" title="清空对话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>
+          <button id="aClose" title="收起"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+        </div>
       </div>
-      <div class="chat-msgs" id="chatMsgs"></div>
-      <div class="chat-input">
-        <div class="upload-hint" id="uploadHint">未上传脚本</div>
-        <textarea id="chatText" placeholder="例如：创建一个riscv架构机器上的Ubuntu SSH可用系统"></textarea>
-        <div class="row">
-          <label>📎 上传 .py
-            <input type="file" id="chatFile" style="display:none" accept=".py,.txt,.json,.yaml,.yml,.sh" />
+      <div class="assistant-msgs" id="aMsgs"></div>
+      <div class="assistant-suggest" id="aSuggest"></div>
+      <div class="assistant-input">
+        <div class="upload-hint" id="aHint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg><span id="aHintText">未上传脚本</span></div>
+        <div class="in-wrap"><textarea id="aText" placeholder="用自然语言描述你的需求，例如：创建一个 riscv 架构机器上的 Ubuntu SSH 系统"></textarea></div>
+        <div class="in-row">
+          <label class="file-lbl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>上传 .py
+            <input type="file" id="aFile" style="display:none" accept=".py,.txt,.json,.yaml,.yml,.sh" />
           </label>
-          <button class="send" id="chatSend">发送</button>
+          <button class="primary send" id="aSend">发送</button>
         </div>
       </div>`;
     document.body.appendChild(panel);
 
-    const msgsEl = panel.querySelector('#chatMsgs');
-    const textEl = panel.querySelector('#chatText');
-    const fileEl = panel.querySelector('#chatFile');
-    const hintEl = panel.querySelector('#uploadHint');
+    const msgsEl = panel.querySelector('#aMsgs');
+    const textEl = panel.querySelector('#aText');
+    const fileEl = panel.querySelector('#aFile');
+    const hintText = panel.querySelector('#aHintText');
+    const suggestEl = panel.querySelector('#aSuggest');
 
-    const open = () => { panel.classList.add('open'); msgsEl.scrollTop = msgsEl.scrollHeight; };
-    const close = () => panel.classList.remove('open');
-    fab.onclick = () => panel.classList.toggle('open');
-    panel.querySelector('#chatClose').onclick = close;
+    function open() {
+        panel.classList.add('open'); backdrop.classList.add('open'); fab.classList.add('hidden');
+        msgsEl.scrollTop = msgsEl.scrollHeight; setTimeout(() => textEl.focus(), 120);
+    }
+    function close() { panel.classList.remove('open'); backdrop.classList.remove('open'); fab.classList.remove('hidden'); }
+    function toggle() { panel.classList.contains('open') ? close() : open(); }
+    window.Assistant = { open, close, toggle };
+
+    fab.onclick = toggle;
+    backdrop.onclick = close;
+    panel.querySelector('#aClose').onclick = close;
 
     function fmtChatTime(ts) {
         const d = ts ? new Date(ts * 1000) : new Date();
-        const pad = n => String(n).padStart(2, '0');
-        return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ` +
-               `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        const p = n => String(n).padStart(2, '0');
+        return `${p(d.getHours())}:${p(d.getMinutes())}`;
+    }
+    function avatarFor(role) {
+        if (role === 'user') {
+            const me = window.ME;
+            const src = me && (me.avatar_url || me.avatar_big);
+            if (src) return `<img src="${escapeHtml(src)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:9px;" />`;
+            return me ? (me.name || me.username || '我').trim().slice(0, 1).toUpperCase() : '我';
+        }
+        return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px;"><path d="M12 3l1.9 4.9L19 9.8l-5.1 1.9L12 17l-1.9-5.3L5 9.8l5.1-1.9L12 3z"/></svg>';
     }
 
     function append(role, content, ts) {
         const div = document.createElement('div');
-        div.className = 'chat-msg ' + role;
+        div.className = 'a-msg ' + role;
+        const av = document.createElement('div');
+        av.className = 'a-avatar'; av.innerHTML = avatarFor(role);
         const wrap = document.createElement('div');
-        wrap.className = 'chat-bubble-wrap';
+        wrap.className = 'a-bubble-wrap';
         const b = document.createElement('div');
-        b.className = 'chat-bubble';
-        // 用户消息保持纯文本；助手消息渲染 markdown
-        if (role === 'assistant') {
-            renderBubbleMarkdown(b, content);
-        } else {
-            b.textContent = content;
-        }
+        b.className = 'a-bubble';
+        if (role === 'assistant') renderBubbleMarkdown(b, content); else b.textContent = content;
         const time = document.createElement('div');
-        time.className = 'chat-time'; time.textContent = fmtChatTime(ts);
-        wrap.appendChild(b);
-        wrap.appendChild(time);
-        div.appendChild(wrap);
+        time.className = 'a-time'; time.textContent = fmtChatTime(ts);
+        wrap.appendChild(b); wrap.appendChild(time);
+        div.appendChild(av); div.appendChild(wrap);
         msgsEl.appendChild(div);
         msgsEl.scrollTop = msgsEl.scrollHeight;
-        return { bubble: b, time };
+        return { bubble: b };
     }
 
-    panel.querySelector('#chatClear').onclick = async () => {
+    // 建议 chips
+    suggestEl.innerHTML = SUGGESTIONS.map(s => `<button class="suggest-chip">${s}</button>`).join('');
+    suggestEl.querySelectorAll('.suggest-chip').forEach(c => {
+        c.onclick = () => { textEl.value = c.textContent; textEl.focus(); };
+    });
+
+    panel.querySelector('#aClear').onclick = async () => {
         if (!confirm('清空所有对话上下文？')) return;
-        await API.clearChat(); msgsEl.innerHTML = '';
+        await API.clearChat(); msgsEl.innerHTML = ''; showSuggest();
     };
+    function showSuggest() { suggestEl.style.display = msgsEl.children.length ? 'none' : 'flex'; }
 
     fileEl.onchange = async () => {
         if (!fileEl.files[0]) return;
         try {
             const r = await API.upload_(fileEl.files[0]);
-            hintEl.textContent = '已上传：' + r.filename;
-            hintEl.style.color = '#047857';
+            hintText.textContent = '已上传：' + r.filename;
+            hintText.parentElement.style.color = 'var(--success)';
         } catch (e) {
-            hintEl.textContent = '上传失败：' + e.message;
-            hintEl.style.color = '#dc2626';
+            hintText.textContent = '上传失败：' + e.message;
+            hintText.parentElement.style.color = 'var(--danger)';
         }
     };
 
@@ -151,56 +167,27 @@ function injectChat() {
         if (!t) return;
         textEl.value = '';
         append('user', t);
+        showSuggest();
 
-        // 创建助手气泡（占位）
-        const div = document.createElement('div');
-        div.className = 'chat-msg assistant';
-        const wrap = document.createElement('div');
-        wrap.className = 'chat-bubble-wrap';
-        const bubble = document.createElement('div');
-        bubble.className = 'chat-bubble';
-        bubble.textContent = '思考中...';
-        const timeEl = document.createElement('div');
-        timeEl.className = 'chat-time';
-        timeEl.textContent = fmtChatTime();
-        wrap.appendChild(bubble);
-        wrap.appendChild(timeEl);
-        div.appendChild(wrap);
-        msgsEl.appendChild(div);
-        msgsEl.scrollTop = msgsEl.scrollHeight;
+        const { bubble } = append('assistant', '');
+        bubble.classList.remove('md');
+        bubble.innerHTML = '<span class="spinner"></span> 思考中…';
 
-        let started = false;
-        let acc = '';
-        // 流式增量到达很快，节流渲染 markdown，避免频繁重排。
-        let renderTimer = null;
+        let started = false, acc = '', renderTimer = null;
         const scheduleRender = (force) => {
-            if (force) {
-                if (renderTimer) { clearTimeout(renderTimer); renderTimer = null; }
-                renderBubbleMarkdown(bubble, acc);
-                msgsEl.scrollTop = msgsEl.scrollHeight;
-                return;
-            }
+            if (force) { if (renderTimer) { clearTimeout(renderTimer); renderTimer = null; } renderBubbleMarkdown(bubble, acc); msgsEl.scrollTop = msgsEl.scrollHeight; return; }
             if (renderTimer) return;
-            renderTimer = setTimeout(() => {
-                renderTimer = null;
-                renderBubbleMarkdown(bubble, acc);
-                msgsEl.scrollTop = msgsEl.scrollHeight;
-            }, 60);
+            renderTimer = setTimeout(() => { renderTimer = null; renderBubbleMarkdown(bubble, acc); msgsEl.scrollTop = msgsEl.scrollHeight; }, 60);
         };
 
         try {
             const resp = await fetch('/api/chat/stream', {
-                method: 'POST',
-                credentials: 'include',
+                method: 'POST', credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ message: t }),
             });
             if (resp.status === 401) { window.location.href = '/login.html'; return; }
-            if (!resp.ok) {
-                const d = await resp.json().catch(() => ({}));
-                bubble.textContent = '错误：' + (d.error || 'HTTP ' + resp.status);
-                return;
-            }
+            if (!resp.ok) { const d = await resp.json().catch(() => ({})); bubble.classList.remove('md'); bubble.textContent = '错误：' + (d.error || 'HTTP ' + resp.status); return; }
 
             const reader = resp.body.getReader();
             const decoder = new TextDecoder();
@@ -211,55 +198,36 @@ function injectChat() {
                 buf += decoder.decode(value, { stream: true });
                 let idx;
                 while ((idx = buf.indexOf('\n\n')) !== -1) {
-                    const raw = buf.slice(0, idx);
-                    buf = buf.slice(idx + 2);
+                    const raw = buf.slice(0, idx); buf = buf.slice(idx + 2);
                     if (!raw.startsWith('data: ')) continue;
                     const payload = raw.slice(6);
                     if (payload === '[DONE]') break outer;
-                    let parsed;
-                    try { parsed = JSON.parse(payload); } catch { continue; }
+                    let parsed; try { parsed = JSON.parse(payload); } catch { continue; }
                     if (parsed.error) { bubble.classList.remove('md'); bubble.textContent = '错误：' + parsed.error; break outer; }
-                    if (parsed.delta) {
-                        if (!started) { acc = ''; started = true; }
-                        acc += parsed.delta;
-                        scheduleRender(false);
-                    }
+                    if (parsed.delta) { if (!started) { acc = ''; started = true; } acc += parsed.delta; scheduleRender(false); }
                 }
             }
-            // 确保库就绪后做一次最终渲染（首条消息可能库还没加载完）。
             await MD.ready();
-            if (started) {
-                scheduleRender(true);
-            } else {
-                bubble.classList.remove('md');
-                bubble.textContent = '（无回复）';
-            }
+            if (started) scheduleRender(true);
+            else { bubble.classList.remove('md'); bubble.textContent = '（无回复）'; }
             window.dispatchEvent(new CustomEvent('chat:done'));
-        } catch (e) {
-            bubble.classList.remove('md');
-            bubble.textContent = '错误：' + e.message;
-        }
+        } catch (e) { bubble.classList.remove('md'); bubble.textContent = '错误：' + e.message; }
     }
-    panel.querySelector('#chatSend').onclick = send;
-    textEl.addEventListener('keydown', e => {
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
-    });
+    panel.querySelector('#aSend').onclick = send;
+    textEl.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
 
     async function reloadHistory() {
         msgsEl.innerHTML = '';
         try {
             const r = await API.chatHistory();
-            (r.history || []).forEach(h => {
-                if (h.role === 'user' || h.role === 'assistant') append(h.role, h.content, h.created_at);
-            });
-            // 库就绪后重渲历史里的助手消息（首次进入可能库尚未加载）。
+            (r.history || []).forEach(h => { if (h.role === 'user' || h.role === 'assistant') append(h.role, h.content, h.created_at); });
             await MD.ready();
-            msgsEl.querySelectorAll('.chat-msg.assistant .chat-bubble').forEach(b => {
-                if (b.dataset.md != null) renderBubbleMarkdown(b, b.dataset.md);
-            });
-        } catch (_) { /* 忽略 */ }
+            msgsEl.querySelectorAll('.a-msg.assistant .a-bubble').forEach(b => { if (b.dataset.md != null) renderBubbleMarkdown(b, b.dataset.md); });
+        } catch (_) { /* noop */ }
+        showSuggest();
     }
     reloadHistory();
     window.addEventListener('experiment:changed', reloadHistory);
+    window.addEventListener('keydown', e => { if (e.key === 'Escape' && panel.classList.contains('open')) close(); });
 }
-window.addEventListener('DOMContentLoaded', injectChat);
+window.addEventListener('DOMContentLoaded', injectAssistant);
