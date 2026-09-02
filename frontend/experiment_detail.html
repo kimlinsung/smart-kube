@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>智能云边端调度系统 · 实验详情</title>
 <link rel="stylesheet" href="/css/style.css" />
+<link rel="stylesheet" href="/css/paper_workspace.css" />
 </head>
 <body data-page="experiment_detail">
 <div class="layout">
@@ -30,6 +31,22 @@
         </div>
       </div>
 
+      <section class="experiment-artifacts" id="paperArtifacts" hidden>
+        <div class="experiment-artifacts-head">
+          <div><span class="eyebrow">PAPER WORKSPACE</span><h2>实验产物与过程</h2></div>
+          <a class="button-link" id="paperWorkspaceLink" href="#">返回论文工作区</a>
+        </div>
+        <div class="experiment-artifact-summary" id="paperSummary"></div>
+        <div class="experiment-artifact-grid">
+          <div><h3>输入文件</h3><div class="artifact-list" id="paperFiles"></div></div>
+          <div><h3>过程记录</h3><ol class="workspace-events" id="paperEvents"></ol></div>
+        </div>
+        <details class="experiment-report" id="paperReport">
+          <summary>最终 Markdown 报告</summary>
+          <article class="report-view" id="paperReportBody"></article>
+        </details>
+      </section>
+
       <div class="card">
         <div class="card-head">
           <h2><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5 9 5 9-5zM3 8v8l9 5 9-5V8"/></svg>实验内的 Units（云 / 边 / 端）</h2>
@@ -50,6 +67,8 @@
 
 <input type="file" id="hiddenUpload" style="display:none" />
 
+<script src="/vendor/marked.min.js"></script>
+<script src="/vendor/purify.min.js"></script>
 <script src="/js/api.js"></script>
 <script src="/js/app.js"></script>
 <script src="/js/chat.js"></script>
@@ -117,10 +136,40 @@ function renderPods() {
     bindPhaseHover(body);
 }
 
+function renderPaperArtifacts() {
+    const workspace = DETAIL.paper_workspace;
+    const root = document.getElementById('paperArtifacts');
+    root.hidden = !workspace;
+    if (!workspace) return;
+    const statusLabels = { queued: '排队中', running: '执行中', completed: '已完成', failed: '失败', interrupted: '已中断' };
+    document.getElementById('paperWorkspaceLink').href = '/paper_workspace.html?id=' + encodeURIComponent(workspace.id);
+    document.getElementById('paperSummary').innerHTML = `
+      <span><b>${escapeHtml(workspace.mode === 'full' ? '完整流程' : '执行至调度')}</b><small>执行模式</small></span>
+      <span><b>${escapeHtml(statusLabels[workspace.status] || workspace.status)}</b><small>工作区状态</small></span>
+      <span><b>${(workspace.files || []).length}</b><small>归档文件</small></span>
+      <span><b>${(workspace.events || []).length}</b><small>过程事件</small></span>`;
+    document.getElementById('paperFiles').innerHTML = (workspace.files || []).map(file => `
+      <a class="artifact-item" href="/api/paper/workspaces/${workspace.id}/files/${file.id}/download">
+        <span class="artifact-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h8l4 4v16H6zM14 2v5h5M9 13h6M9 17h4"/></svg></span>
+        <span class="artifact-meta"><b>${escapeHtml(file.original_name)}</b><small>${file.size} B</small></span>
+      </a>`).join('') || '<span class="inspector-empty">暂无文件</span>';
+    document.getElementById('paperEvents').innerHTML = [...(workspace.events || [])].slice(-10).reverse().map(event => `
+      <li class="${escapeHtml(event.event_type)}"><span class="event-node"></span>
+        <time class="event-time">${new Date(event.created_at * 1000).toLocaleTimeString('zh-CN', { hour12: false })}</time>
+        <span class="event-phase">${escapeHtml(event.phase)}</span><span class="event-content">${escapeHtml(event.content)}</span></li>`).join('');
+    const report = document.getElementById('paperReport');
+    report.hidden = !workspace.report_md;
+    if (workspace.report_md) {
+        document.getElementById('paperReportBody').innerHTML = window.marked && window.DOMPurify
+            ? DOMPurify.sanitize(marked.parse(workspace.report_md, { gfm: true, breaks: true }))
+            : `<pre>${escapeHtml(workspace.report_md)}</pre>`;
+    }
+}
+
 async function loadDetail(silent = false) {
     try {
         DETAIL = await API.getExperiment(EXP_ID);
-        renderHead(); renderPods();
+        renderHead(); renderPaperArtifacts(); renderPods();
     } catch (e) {
         if (silent) return;
         document.getElementById('expName').textContent = '加载失败';

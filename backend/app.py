@@ -13,7 +13,7 @@ from flask import Flask, redirect, request, send_from_directory, session
 from flask_cors import CORS
 from flask_sock import Sock
 
-from . import audit, auth, db, k8s_client, presence, routes_api, routes_feishu, routes_shell
+from . import audit, auth, db, k8s_client, presence, routes_api, routes_feishu, routes_shell, task_events
 from .config import FLASK_CONF, FRONTEND_DIR
 
 
@@ -31,6 +31,12 @@ def create_app() -> Flask:
 
     # 初始化 DB 与默认管理员、ns
     db.init_db()
+    interrupted = db.interrupt_incomplete_tasks()
+    if interrupted:
+        app.logger.warning("已将 %d 个服务重启前的未完成任务标记为中断", interrupted)
+    interrupted_workspaces = db.interrupt_incomplete_paper_workspaces()
+    if interrupted_workspaces:
+        app.logger.warning("已将 %d 个服务重启前的论文工作区标记为中断", interrupted_workspaces)
     auth.ensure_admin()
     try:
         k8s_client.ensure_namespace()
@@ -54,6 +60,7 @@ def create_app() -> Flask:
     sock = Sock(app)
     routes_shell.register(sock)
     presence.register(sock)
+    task_events.register(sock)
 
     # ---- 静态前端 ----
     @app.route("/")

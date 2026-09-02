@@ -869,13 +869,20 @@ def run_python_oneshot(
     timeout: int = 120,
     node_type: Optional[str] = None,
     experiment_id: Optional[int] = None,
+    progress_callback=None,
 ) -> dict:
     """拉起一个临时 python Pod，挂入代码并执行，运行完毕后销毁。返回输出。"""
+    def progress(detail, value):
+        if progress_callback:
+            progress_callback(detail, value)
+
+    progress("正在选择可用节点", 10)
     ensure_namespace()
     arch_canonical = _normalize_arch(arch) if arch else None
     node = find_node_by_arch_or_hostname(arch=arch_canonical, hostname=hostname, node_type=node_type)
     if not node:
         raise RuntimeError("未找到可用节点用于 Python 执行")
+    progress(f"已选择节点 {node['name']}", 18)
     name = _make_pod_name("pyexec", user["username"])
 
     # 让容器先睡眠等待我们 cp 文件后 exec 触发执行
@@ -920,9 +927,11 @@ def run_python_oneshot(
             node_type=node_type,
         ),
     )
+    progress("正在创建临时 Python Pod", 25)
     core_v1.create_namespaced_pod(NAMESPACE, pod)
 
     # 等 Pod Running
+    progress("等待临时 Pod 就绪", 35)
     deadline = time.time() + 90
     phase = ""
     while time.time() < deadline:
@@ -942,9 +951,13 @@ def run_python_oneshot(
         raise RuntimeError(f"临时 Python Pod 未能进入 Running，状态：{phase}")
 
     try:
+        progress("临时 Pod 已就绪，正在上传脚本", 52)
         copy_to_pod(name, code_path, dest_dir="/tmp", filename="main.py")
+        progress("脚本已上传，正在执行", 68)
         result = exec_in_pod(name, ["python", "/tmp/main.py"], timeout=timeout)
+        progress("执行结束，正在收集输出", 90)
     finally:
+        progress("正在清理临时 Pod", 96)
         try:
             core_v1.delete_namespaced_pod(name, NAMESPACE)
         except Exception:

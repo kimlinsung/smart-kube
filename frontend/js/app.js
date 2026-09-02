@@ -16,6 +16,7 @@ const ICONS = {
     check: '<path d="M20 6L9 17l-5-5"/>',
     node: '<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/>',
     users: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
+    workflow: '<rect x="3" y="4" width="6" height="5" rx="1"/><rect x="15" y="4" width="6" height="5" rx="1"/><rect x="9" y="15" width="6" height="5" rx="1"/><path d="M9 6.5h6M6 9v3h6v3M18 9v3h-6"/>',
 };
 function icon(name, cls = '') {
     return `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ''}</svg>`;
@@ -36,6 +37,7 @@ function brandMark() {
 const NAV = [
     { key: 'dashboard',   href: '/dashboard.html',   label: '我的资源', ico: 'dashboard' },
     { key: 'experiments', href: '/experiments.html', label: '实验管理', ico: 'experiments' },
+    { key: 'paper_workspace', href: '/paper_workspace.html', label: '论文工作区', ico: 'workflow' },
     { key: 'logs',        href: '/logs.html',        label: '操作日志', ico: 'logs' },
     { key: 'admin',       href: '/admin.html',       label: '集群管理', ico: 'admin', admin: true },
     { key: 'all_units',   href: '/all_units.html',   label: '全部 Units', ico: 'box', admin: true },
@@ -45,6 +47,7 @@ const PAGE_META = {
     dashboard:         { nav: 'dashboard',   title: '我的资源',   sub: '管理你的云 / 边 / 端容器实例' },
     experiments:       { nav: 'experiments', title: '实验管理',   sub: '组织与切换你的实验环境' },
     experiment_detail: { nav: 'experiments', title: '实验详情',   sub: '实验内的云边端资源明细' },
+    paper_workspace:    { nav: 'paper_workspace', title: '论文工作区', sub: '配置、调度、分析与实验产物' },
     logs:              { nav: 'logs',        title: '操作日志',   sub: '系统操作审计记录' },
     admin:             { nav: 'admin',       title: '集群管理',   sub: '集群节点状态与调度控制' },
     all_units:         { nav: 'all_units',   title: '全部 Units', sub: '管理所有用户的云 / 边 / 端容器' },

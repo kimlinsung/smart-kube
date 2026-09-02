@@ -11,7 +11,7 @@ import contextvars
 import json
 import os
 import re
-from typing import Optional
+from typing import Callable, Optional
 
 from langchain_core.tools import tool
 
@@ -23,6 +23,7 @@ _user_ctx: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar("curr
 _file_ctx: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("uploaded_file", default=None)
 _exp_ctx: contextvars.ContextVar[Optional[int]] = contextvars.ContextVar("current_experiment", default=None)
 _source_ip_ctx: contextvars.ContextVar[str] = contextvars.ContextVar("source_ip", default="unknown")
+_progress_ctx: contextvars.ContextVar[Optional[Callable]] = contextvars.ContextVar("task_progress", default=None)
 
 
 def set_user(
@@ -30,11 +31,13 @@ def set_user(
     uploaded_file: Optional[str] = None,
     experiment_id: Optional[int] = None,
     source_ip: str = "unknown",
+    progress_callback: Optional[Callable] = None,
 ):
     _user_ctx.set(user)
     _file_ctx.set(uploaded_file)
     _exp_ctx.set(experiment_id)
     _source_ip_ctx.set(source_ip)
+    _progress_ctx.set(progress_callback)
 
 
 def _exp() -> Optional[int]:
@@ -197,6 +200,7 @@ def run_uploaded_python(
             _user(), code_path,
             hostname=hostname, arch=arch, image=image, timeout=int(timeout),
             experiment_id=_exp(),
+            progress_callback=_progress_ctx.get(),
         )
     except Exception as e:
         return f"❌ 执行失败：{e}"

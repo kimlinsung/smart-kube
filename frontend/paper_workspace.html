@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>智能云边端调度系统 · 论文工作区</title>
+<link rel="stylesheet" href="/css/style.css" />
+<link rel="stylesheet" href="/css/paper_workspace.css" />
+</head>
+<body data-page="paper_workspace">
+<div class="layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <div class="main">
+    <header class="topbar" id="topbar"></header>
+    <main class="paper-content">
+      <aside class="workspace-rail">
+        <button class="primary new-workspace-btn" id="newWorkspaceBtn" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+          新建工作
+        </button>
+        <div class="rail-label">实验工作记录</div>
+        <div class="workspace-history" id="workspaceHistory"></div>
+      </aside>
+
+      <section class="workspace-main" id="workspaceMain">
+        <div class="workspace-empty" id="workspaceEmpty">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="6" height="5" rx="1"/><rect x="15" y="4" width="6" height="5" rx="1"/><rect x="9" y="15" width="6" height="5" rx="1"/><path d="M9 6.5h6M6 9v3h6v3M18 9v3h-6"/></svg>
+          <h2>开始一次云边端实验工作</h2>
+          <p>上传输入文件，系统将自动解析实验目标、配置和资源需求。</p>
+          <button class="primary" id="emptyStartBtn" type="button">开始配置</button>
+        </div>
+
+        <div class="workspace-view" id="workspaceView" hidden>
+          <header class="workspace-head">
+            <div class="workspace-title">
+              <div class="workspace-kicker"><span id="workspaceMode"></span><span id="workspaceStatus"></span></div>
+              <h1 id="workspaceName"></h1>
+              <p id="workspaceGoal"></p>
+            </div>
+            <div class="workspace-actions">
+              <a class="button-link" id="openExperiment" href="#">查看实验</a>
+              <button id="retryAnalysis" type="button" hidden>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M20 11a8 8 0 1 0 2 5M20 4v7h-7"/></svg>
+                重新分析
+              </button>
+              <button class="danger" id="reclaimResources" type="button" hidden>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15M10 11v5M14 11v5"/></svg>
+                回收资源
+              </button>
+            </div>
+          </header>
+
+          <div class="run-strip">
+            <div class="run-progress"><span id="runProgressBar"></span></div>
+            <span id="runProgressText">等待开始</span>
+            <time id="workspaceUpdated"></time>
+          </div>
+
+          <section class="workflow-band">
+            <div class="section-heading">
+              <div><span class="eyebrow">WORKFLOW</span><h2>实验流程</h2></div>
+              <span class="live-indicator" id="liveIndicator"><i></i>实时连接</span>
+            </div>
+            <div id="workflowGraph" aria-label="配置、调度、分析、报告和资源生命周期流程图"></div>
+          </section>
+
+          <div class="workspace-grid">
+            <div class="workspace-column">
+              <section class="workspace-section">
+                <div class="section-heading"><div><span class="eyebrow">INPUTS</span><h2>输入文件</h2></div><b id="fileCount">0</b></div>
+                <div class="artifact-list" id="artifactList"></div>
+              </section>
+
+              <section class="workspace-section telemetry-section">
+                <div class="section-heading"><div><span class="eyebrow">OBSERVABILITY</span><h2>运行观测</h2></div></div>
+                <div class="metric-row" id="metricRow"></div>
+                <div class="chart-grid">
+                  <div><h3>阶段耗时</h3><div class="paper-chart" id="durationChart"></div></div>
+                  <div><h3>资源分布</h3><div class="paper-chart" id="resourceChart"></div></div>
+                </div>
+              </section>
+
+              <section class="workspace-section">
+                <div class="section-heading"><div><span class="eyebrow">EVENT STREAM</span><h2>过程记录</h2></div><span id="eventCount"></span></div>
+                <ol class="workspace-events" id="workspaceEvents"></ol>
+              </section>
+            </div>
+
+            <aside class="artifact-inspector">
+              <div class="inspector-tabs" role="tablist">
+                <button class="active" data-tab="config" type="button">配置</button>
+                <button data-tab="schedule" type="button">调度</button>
+                <button data-tab="analysis" type="button">分析</button>
+                <button data-tab="report" type="button">报告</button>
+              </div>
+              <div class="inspector-body" id="inspectorBody"></div>
+              <a class="report-download" id="downloadReport" href="#" hidden>下载 Markdown 报告</a>
+            </aside>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<div class="launch-backdrop" id="modeBackdrop" hidden>
+  <section class="launch-dialog mode-dialog" role="dialog" aria-modal="true" aria-labelledby="modeTitle">
+    <header>
+      <div><span class="eyebrow">RUN SCOPE</span><h2 id="modeTitle">选择执行范围</h2></div>
+      <button class="icon-btn" id="closeMode" type="button" aria-label="关闭" title="关闭">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </header>
+    <div class="mode-dialog-body">
+      <button class="mode-option" type="button" data-workspace-mode="resources">
+        <span class="mode-option-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="8" cy="7" r="1" fill="currentColor"/><circle cx="16" cy="12" r="1" fill="currentColor"/><circle cx="11" cy="17" r="1" fill="currentColor"/></svg></span>
+        <span><b>执行至调度</b><small>从文件生成配置并创建运行资源，跳过分析</small></span>
+        <svg class="mode-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+      </button>
+      <button class="mode-option" type="button" data-workspace-mode="full">
+        <span class="mode-option-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 4h14v16H5zM8 8h8M8 12h5M8 16h7"/></svg></span>
+        <span><b>完整流程</b><small>配置、调度、分析并生成 Markdown 报告</small></span>
+        <svg class="mode-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+      </button>
+    </div>
+  </section>
+</div>
+
+<div class="launch-backdrop" id="launchBackdrop" hidden>
+  <section class="launch-dialog" role="dialog" aria-modal="true" aria-labelledby="launchTitle">
+    <header>
+      <div><span class="eyebrow">NEW EXPERIMENT</span><h2 id="launchTitle">创建论文工作区</h2></div>
+      <button class="icon-btn" id="closeLaunch" type="button" aria-label="关闭" title="关闭">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </header>
+    <form id="launchForm">
+      <div class="launch-section file-launch-section">
+        <span class="field-title">输入文件</span>
+        <button class="file-drop" id="paperFileDrop" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg>
+          <b>选择或拖入多个文件</b><small>最多 8 个，单文件不超过 20 MB</small>
+        </button>
+        <input id="paperFiles" type="file" multiple hidden />
+        <div class="selected-files" id="selectedFiles"></div>
+        <p class="file-derive-note">实验名称、目标、配置和资源需求将从文件内容自动解析。</p>
+      </div>
+
+      <div class="launch-error" id="launchError"></div>
+      <div class="launch-progress" id="launchProgress" hidden><span><i id="launchProgressBar"></i></span><b id="launchProgressText">0%</b></div>
+      <footer>
+        <button id="cancelLaunch" type="button">返回</button>
+        <button class="primary" id="startWorkspace" type="submit">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m8 5 11 7-11 7z"/></svg>
+          创建实验并开始
+        </button>
+      </footer>
+    </form>
+  </section>
+</div>
+
+<div class="file-preview-backdrop" id="filePreviewBackdrop" hidden>
+  <section class="file-preview-dialog" role="dialog" aria-modal="true">
+    <header><b id="previewFilename"></b><button class="icon-btn" id="closePreview" type="button" aria-label="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6 6 18"/></svg></button></header>
+    <pre id="filePreview"></pre>
+  </section>
+</div>
+
+<script src="/vendor/cytoscape.min.js"></script>
+<script src="/vendor/echarts.min.js"></script>
+<script src="/vendor/marked.min.js"></script>
+<script src="/vendor/purify.min.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/app.js"></script>
+<script src="/js/chat.js"></script>
+<script src="/js/paper_workspace.js"></script>
+</body>
+</html>

@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import os
+import json
 import sqlite3
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 
 from .config import DATA_DIR
@@ -94,6 +96,126 @@ def init_db():
                 created_at INTEGER NOT NULL
             )
             """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS script_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                experiment_id INTEGER,
+                original_name TEXT NOT NULL,
+                stored_path TEXT NOT NULL,
+                size INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS execution_tasks (
+                id TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                experiment_id INTEGER,
+                kind TEXT NOT NULL,
+                status TEXT NOT NULL,
+                title TEXT NOT NULL,
+                detail TEXT,
+                progress INTEGER NOT NULL DEFAULT 0,
+                result TEXT,
+                error TEXT,
+                metadata TEXT,
+                created_at INTEGER NOT NULL,
+                started_at INTEGER,
+                updated_at INTEGER NOT NULL,
+                finished_at INTEGER
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS task_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                content TEXT,
+                created_at INTEGER NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS paper_workspaces (
+                id TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                experiment_id INTEGER NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                goal TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                status TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                resource_spec TEXT NOT NULL,
+                config_json TEXT,
+                schedule_json TEXT,
+                analysis_json TEXT,
+                report_md TEXT,
+                retries INTEGER NOT NULL DEFAULT 0,
+                resources_reclaimed INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                finished_at INTEGER
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS paper_workspace_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                original_name TEXT NOT NULL,
+                stored_path TEXT NOT NULL,
+                size INTEGER NOT NULL DEFAULT 0,
+                content_type TEXT,
+                created_at INTEGER NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS paper_workspace_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id TEXT NOT NULL,
+                phase TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                content TEXT,
+                data TEXT,
+                created_at INTEGER NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_script_files_owner "
+            "ON script_files(user_id, experiment_id, id DESC)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_execution_tasks_owner "
+            "ON execution_tasks(user_id, experiment_id, created_at DESC)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_task_events_task "
+            "ON task_events(task_id, id)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_paper_workspaces_owner "
+            "ON paper_workspaces(user_id, created_at DESC)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_paper_workspace_files_workspace "
+            "ON paper_workspace_files(workspace_id, id)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_paper_workspace_events_workspace "
+            "ON paper_workspace_events(workspace_id, id)"
         )
         # 老库升级：chat_history 缺 experiment_id 时补上
         cur.execute("PRAGMA table_info(chat_history)")
@@ -264,6 +386,402 @@ def clear_chat(user_id, experiment_id=None):
 
 
 # --------------------------------------------------------------------------------------
+# 上传脚本与可恢复执行任务
+# --------------------------------------------------------------------------------------
+
+def create_script_file(user_id, experiment_id, original_name, stored_path, size=0):
+    now = int(time.time())
+    with cursor() as cur:
+        cur.execute(
+            "INSERT INTO script_files(user_id, experiment_id, original_name, stored_path, size, created_at) "
+            "VALUES(?,?,?,?,?,?)",
+            (user_id, experiment_id, original_name, stored_path, int(size or 0), now),
+        )
+        file_id = cur.lastrowid
+        cur.execute("SELECT * FROM script_files WHERE id=?", (file_id,))
+        return dict(cur.fetchone())
+
+
+def get_script_file(file_id, user_id=None):
+    clauses = ["id=?"]
+    params = [file_id]
+    if user_id is not None:
+        clauses.append("user_id=?")
+        params.append(user_id)
+    with cursor() as cur:
+        cur.execute(
+            "SELECT id, user_id, experiment_id, original_name, size, created_at "
+            f"FROM script_files WHERE {' AND '.join(clauses)}",
+            params,
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def get_script_file_internal(file_id, user_id=None):
+    clauses = ["id=?"]
+    params = [file_id]
+    if user_id is not None:
+        clauses.append("user_id=?")
+        params.append(user_id)
+    with cursor() as cur:
+        cur.execute(f"SELECT * FROM script_files WHERE {' AND '.join(clauses)}", params)
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def get_latest_script_file(user_id, experiment_id=None):
+    if experiment_id is None:
+        query = "SELECT * FROM script_files WHERE user_id=? ORDER BY id DESC LIMIT 1"
+        params = (user_id,)
+    else:
+        query = (
+            "SELECT * FROM script_files WHERE user_id=? AND experiment_id=? "
+            "ORDER BY id DESC LIMIT 1"
+        )
+        params = (user_id, experiment_id)
+    with cursor() as cur:
+        cur.execute(query, params)
+        row = cur.fetchone()
+    if not row:
+        return None
+    item = dict(row)
+    item.pop("stored_path", None)
+    return item
+
+
+def create_execution_task(user_id, experiment_id, kind, title, detail="", metadata=None):
+    now = int(time.time())
+    task_id = uuid.uuid4().hex
+    metadata_text = json.dumps(metadata or {}, ensure_ascii=False)
+    with cursor() as cur:
+        cur.execute(
+            "INSERT INTO execution_tasks("
+            "id,user_id,experiment_id,kind,status,title,detail,progress,metadata,created_at,updated_at"
+            ") VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (task_id, user_id, experiment_id, kind, "queued", title, detail, 0, metadata_text, now, now),
+        )
+        cur.execute(
+            "INSERT INTO task_events(task_id,event_type,content,created_at) VALUES(?,?,?,?)",
+            (task_id, "queued", detail or "任务已进入队列", now),
+        )
+    return get_execution_task(task_id, user_id=user_id)
+
+
+def update_execution_task(task_id, **changes):
+    allowed = {
+        "status", "title", "detail", "progress", "result", "error",
+        "started_at", "finished_at", "metadata",
+    }
+    updates = []
+    params = []
+    for key, value in changes.items():
+        if key not in allowed:
+            continue
+        if key == "metadata" and not isinstance(value, str):
+            value = json.dumps(value or {}, ensure_ascii=False)
+        if key == "progress":
+            value = min(100, max(0, int(value or 0)))
+        updates.append(f"{key}=?")
+        params.append(value)
+    if not updates:
+        return get_execution_task(task_id)
+    updates.append("updated_at=?")
+    params.append(int(time.time()))
+    params.append(task_id)
+    with cursor() as cur:
+        cur.execute(f"UPDATE execution_tasks SET {', '.join(updates)} WHERE id=?", params)
+    return get_execution_task(task_id)
+
+
+def add_task_event(task_id, event_type, content=""):
+    with cursor() as cur:
+        cur.execute(
+            "INSERT INTO task_events(task_id,event_type,content,created_at) VALUES(?,?,?,?)",
+            (task_id, event_type, str(content)[:4000], int(time.time())),
+        )
+
+
+def _task_dict(row, include_events=False):
+    task = dict(row)
+    try:
+        task["metadata"] = json.loads(task.get("metadata") or "{}")
+    except (TypeError, ValueError):
+        task["metadata"] = {}
+    if include_events:
+        with cursor() as cur:
+            cur.execute(
+                "SELECT id,event_type,content,created_at FROM task_events "
+                "WHERE task_id=? ORDER BY id",
+                (task["id"],),
+            )
+            task["events"] = [dict(event) for event in cur.fetchall()]
+    return task
+
+
+def get_execution_task(task_id, user_id=None, include_events=True):
+    clauses = ["id=?"]
+    params = [task_id]
+    if user_id is not None:
+        clauses.append("user_id=?")
+        params.append(user_id)
+    with cursor() as cur:
+        cur.execute(f"SELECT * FROM execution_tasks WHERE {' AND '.join(clauses)}", params)
+        row = cur.fetchone()
+    return _task_dict(row, include_events=include_events) if row else None
+
+
+def list_execution_tasks(user_id, experiment_id=None, limit=20):
+    clauses = ["user_id=?"]
+    params = [user_id]
+    if experiment_id is not None:
+        clauses.append("experiment_id=?")
+        params.append(experiment_id)
+    params.append(min(100, max(1, int(limit or 20))))
+    with cursor() as cur:
+        cur.execute(
+            f"SELECT * FROM execution_tasks WHERE {' AND '.join(clauses)} "
+            "ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            params,
+        )
+        rows = cur.fetchall()
+    return [_task_dict(row, include_events=True) for row in rows]
+
+
+def find_active_task(user_id, experiment_id, kind):
+    with cursor() as cur:
+        cur.execute(
+            "SELECT * FROM execution_tasks WHERE user_id=? AND experiment_id=? "
+            "AND kind=? AND status IN ('queued','running') ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            (user_id, experiment_id, kind),
+        )
+        row = cur.fetchone()
+    return _task_dict(row, include_events=True) if row else None
+
+
+def interrupt_incomplete_tasks():
+    now = int(time.time())
+    message = "服务已重启，任务执行状态已中断，请重新发起"
+    with cursor() as cur:
+        cur.execute(
+            "SELECT id FROM execution_tasks WHERE status IN ('queued','running')"
+        )
+        task_ids = [row["id"] for row in cur.fetchall()]
+        if task_ids:
+            marks = ",".join("?" for _ in task_ids)
+            cur.execute(
+                f"UPDATE execution_tasks SET status='interrupted', detail=?, error=?, "
+                f"finished_at=?, updated_at=? WHERE id IN ({marks})",
+                (message, message, now, now, *task_ids),
+            )
+            cur.executemany(
+                "INSERT INTO task_events(task_id,event_type,content,created_at) VALUES(?,?,?,?)",
+                [(task_id, "interrupted", message, now) for task_id in task_ids],
+            )
+    return len(task_ids)
+
+
+# --------------------------------------------------------------------------------------
+# 论文工作区：每个工作区对应一个实验，持久保存输入与全流程产物
+# --------------------------------------------------------------------------------------
+
+_PAPER_JSON_FIELDS = ("resource_spec", "config_json", "schedule_json", "analysis_json")
+
+
+def _json_load(value, fallback):
+    try:
+        return json.loads(value) if value else fallback
+    except (TypeError, ValueError):
+        return fallback
+
+
+def create_paper_workspace(user_id, experiment_id, name, goal, mode, resource_spec):
+    now = int(time.time())
+    workspace_id = uuid.uuid4().hex
+    with cursor() as cur:
+        cur.execute(
+            "INSERT INTO paper_workspaces("
+            "id,user_id,experiment_id,name,goal,mode,status,stage,resource_spec,created_at,updated_at"
+            ") VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                workspace_id, user_id, experiment_id, name, goal, mode,
+                "queued", "intake", json.dumps(resource_spec or {}, ensure_ascii=False), now, now,
+            ),
+        )
+    add_paper_workspace_event(workspace_id, "intake", "queued", "工作区已创建，等待处理")
+    return get_paper_workspace(workspace_id, user_id=user_id)
+
+
+def update_paper_workspace(workspace_id, **changes):
+    allowed = {
+        "name", "goal", "mode", "status", "stage", "resource_spec", "config_json",
+        "schedule_json", "analysis_json", "report_md", "retries", "resources_reclaimed",
+        "finished_at",
+    }
+    updates, params = [], []
+    for key, value in changes.items():
+        if key not in allowed:
+            continue
+        if key in _PAPER_JSON_FIELDS and not isinstance(value, str):
+            value = json.dumps(value or {}, ensure_ascii=False)
+        if key == "resources_reclaimed":
+            value = 1 if value else 0
+        updates.append(f"{key}=?")
+        params.append(value)
+    if not updates:
+        return get_paper_workspace(workspace_id)
+    updates.append("updated_at=?")
+    params.extend((int(time.time()), workspace_id))
+    with cursor() as cur:
+        cur.execute(f"UPDATE paper_workspaces SET {', '.join(updates)} WHERE id=?", params)
+    return get_paper_workspace(workspace_id)
+
+
+def add_paper_workspace_file(workspace_id, user_id, original_name, stored_path, size, content_type=""):
+    now = int(time.time())
+    with cursor() as cur:
+        cur.execute(
+            "INSERT INTO paper_workspace_files("
+            "workspace_id,user_id,original_name,stored_path,size,content_type,created_at"
+            ") VALUES(?,?,?,?,?,?,?)",
+            (workspace_id, user_id, original_name, stored_path, int(size or 0), content_type or "", now),
+        )
+        file_id = cur.lastrowid
+        cur.execute("SELECT * FROM paper_workspace_files WHERE id=?", (file_id,))
+        return dict(cur.fetchone())
+
+
+def add_paper_workspace_event(workspace_id, phase, event_type, content="", data=None):
+    now = int(time.time())
+    with cursor() as cur:
+        cur.execute(
+            "INSERT INTO paper_workspace_events(workspace_id,phase,event_type,content,data,created_at) "
+            "VALUES(?,?,?,?,?,?)",
+            (
+                workspace_id, phase, event_type, str(content or "")[:4000],
+                json.dumps(data or {}, ensure_ascii=False), now,
+            ),
+        )
+        return cur.lastrowid
+
+
+def _paper_workspace_dict(row, include_details=False):
+    item = dict(row)
+    for field in _PAPER_JSON_FIELDS:
+        item[field] = _json_load(item.get(field), {})
+    item["resources_reclaimed"] = bool(item.get("resources_reclaimed"))
+    if include_details:
+        with cursor() as cur:
+            cur.execute(
+                "SELECT id,workspace_id,original_name,size,content_type,created_at "
+                "FROM paper_workspace_files WHERE workspace_id=? ORDER BY id",
+                (item["id"],),
+            )
+            item["files"] = [dict(row) for row in cur.fetchall()]
+            cur.execute(
+                "SELECT id,phase,event_type,content,data,created_at "
+                "FROM paper_workspace_events WHERE workspace_id=? ORDER BY id",
+                (item["id"],),
+            )
+            events = []
+            for event_row in cur.fetchall():
+                event = dict(event_row)
+                event["data"] = _json_load(event.get("data"), {})
+                events.append(event)
+            item["events"] = events
+    return item
+
+
+def get_paper_workspace(workspace_id, user_id=None, include_details=True):
+    clauses, params = ["w.id=?"], [workspace_id]
+    if user_id is not None:
+        clauses.append("w.user_id=?")
+        params.append(user_id)
+    with cursor() as cur:
+        cur.execute(
+            "SELECT w.*, e.name AS experiment_name FROM paper_workspaces w "
+            "LEFT JOIN experiments e ON e.id=w.experiment_id "
+            f"WHERE {' AND '.join(clauses)}",
+            params,
+        )
+        row = cur.fetchone()
+    return _paper_workspace_dict(row, include_details=include_details) if row else None
+
+
+def get_paper_workspace_for_experiment(experiment_id, user_id=None, include_details=True):
+    clauses, params = ["w.experiment_id=?"], [experiment_id]
+    if user_id is not None:
+        clauses.append("w.user_id=?")
+        params.append(user_id)
+    with cursor() as cur:
+        cur.execute(
+            "SELECT w.*, e.name AS experiment_name FROM paper_workspaces w "
+            "LEFT JOIN experiments e ON e.id=w.experiment_id "
+            f"WHERE {' AND '.join(clauses)}",
+            params,
+        )
+        row = cur.fetchone()
+    return _paper_workspace_dict(row, include_details=include_details) if row else None
+
+
+def list_paper_workspaces(user_id, limit=50):
+    with cursor() as cur:
+        cur.execute(
+            "SELECT w.*, e.name AS experiment_name FROM paper_workspaces w "
+            "LEFT JOIN experiments e ON e.id=w.experiment_id WHERE w.user_id=? "
+            "ORDER BY w.created_at DESC LIMIT ?",
+            (user_id, min(100, max(1, int(limit or 50)))),
+        )
+        rows = cur.fetchall()
+    return [_paper_workspace_dict(row, include_details=False) for row in rows]
+
+
+def get_paper_workspace_file(file_id, user_id=None):
+    clauses, params = ["id=?"], [file_id]
+    if user_id is not None:
+        clauses.append("user_id=?")
+        params.append(user_id)
+    with cursor() as cur:
+        cur.execute(f"SELECT * FROM paper_workspace_files WHERE {' AND '.join(clauses)}", params)
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def list_paper_workspace_files_internal(workspace_id, user_id=None):
+    clauses, params = ["workspace_id=?"], [workspace_id]
+    if user_id is not None:
+        clauses.append("user_id=?")
+        params.append(user_id)
+    with cursor() as cur:
+        cur.execute(
+            f"SELECT * FROM paper_workspace_files WHERE {' AND '.join(clauses)} ORDER BY id",
+            params,
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def interrupt_incomplete_paper_workspaces():
+    now = int(time.time())
+    message = "服务已重启，工作流已中断；已创建的资源会保留，可在工作区中检查"
+    with cursor() as cur:
+        cur.execute("SELECT id FROM paper_workspaces WHERE status IN ('queued','running')")
+        workspace_ids = [row["id"] for row in cur.fetchall()]
+        if workspace_ids:
+            marks = ",".join("?" for _ in workspace_ids)
+            cur.execute(
+                f"UPDATE paper_workspaces SET status='interrupted', updated_at=?, finished_at=? "
+                f"WHERE id IN ({marks})",
+                (now, now, *workspace_ids),
+            )
+            cur.executemany(
+                "INSERT INTO paper_workspace_events(workspace_id,phase,event_type,content,data,created_at) "
+                "VALUES(?,?,?,?,?,?)",
+                [(workspace_id, "system", "interrupted", message, "{}", now) for workspace_id in workspace_ids],
+            )
+    return len(workspace_ids)
+
+
+# --------------------------------------------------------------------------------------
 # 实验（一个 session = 一个 experiment）
 # --------------------------------------------------------------------------------------
 
@@ -308,10 +826,24 @@ def list_experiments(user_id: int | None = None) -> list[dict]:
 
 
 def delete_experiment(exp_id: int):
-    """仅删 experiments 行和对应 chat_history。Pod 由 k8s_client 侧清理。"""
+    """删除实验元数据并返回需要从磁盘移除的论文工作区文件路径。"""
     with cursor() as cur:
+        cur.execute(
+            "SELECT f.stored_path FROM paper_workspace_files f "
+            "JOIN paper_workspaces w ON w.id=f.workspace_id WHERE w.experiment_id=?",
+            (exp_id,),
+        )
+        stored_paths = [row["stored_path"] for row in cur.fetchall()]
+        cur.execute("SELECT id FROM paper_workspaces WHERE experiment_id=?", (exp_id,))
+        workspace_ids = [row["id"] for row in cur.fetchall()]
+        if workspace_ids:
+            marks = ",".join("?" for _ in workspace_ids)
+            cur.execute(f"DELETE FROM paper_workspace_events WHERE workspace_id IN ({marks})", workspace_ids)
+            cur.execute(f"DELETE FROM paper_workspace_files WHERE workspace_id IN ({marks})", workspace_ids)
+            cur.execute(f"DELETE FROM paper_workspaces WHERE id IN ({marks})", workspace_ids)
         cur.execute("DELETE FROM chat_history WHERE experiment_id=?", (exp_id,))
         cur.execute("DELETE FROM experiments WHERE id=?", (exp_id,))
+    return stored_paths
 
 
 def ensure_default_experiment(user_id: int) -> int:

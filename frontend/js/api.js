@@ -44,13 +44,63 @@ const API = {
     clusterInfo() { return this.get('/api/cluster/info'); },
 
     chat(msg) { return this.post('/api/chat', { message: msg }); },
+    startChatTask(msg) { return this.post('/api/chat/tasks', { message: msg }); },
     chatHistory() { return this.get('/api/chat/history'); },
     clearChat() { return this.del('/api/chat/history'); },
+    tasks() { return this.get('/api/tasks'); },
 
     upload_(file) {
         const fd = new FormData(); fd.append('file', file);
         return this.upload('/api/upload', fd);
     },
+    uploadWithProgress(file, onProgress) {
+        return new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/api/upload');
+            xhr.withCredentials = true;
+            xhr.upload.onprogress = event => {
+                if (event.lengthComputable && onProgress) onProgress(Math.round(event.loaded / event.total * 100));
+            };
+            xhr.onload = () => {
+                let data = {};
+                try { data = JSON.parse(xhr.responseText || '{}'); } catch (_) { data = {}; }
+                if (xhr.status === 401) { window.location.href = '/login.html'; return; }
+                if (xhr.status < 200 || xhr.status >= 300) { reject(new Error(data.error || ('HTTP ' + xhr.status))); return; }
+                resolve(data);
+            };
+            xhr.onerror = () => reject(new Error('网络连接中断'));
+            const form = new FormData(); form.append('file', file);
+            xhr.send(form);
+        });
+    },
+    currentScript() { return this.get('/api/scripts/current'); },
+    runScript(fileId, options={}) { return this.post(`/api/scripts/${fileId}/run`, options); },
+    paperWorkspaces() { return this.get('/api/paper/workspaces'); },
+    paperWorkspace(id) { return this.get(`/api/paper/workspaces/${encodeURIComponent(id)}`); },
+    createPaperWorkspace(formData, onProgress) {
+        return new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/api/paper/workspaces');
+            xhr.withCredentials = true;
+            xhr.upload.onprogress = event => {
+                if (event.lengthComputable && onProgress) onProgress(Math.round(event.loaded / event.total * 100));
+            };
+            xhr.onload = () => {
+                let data = {};
+                try { data = JSON.parse(xhr.responseText || '{}'); } catch (_) { data = {}; }
+                if (xhr.status === 401) { window.location.href = '/login.html'; return; }
+                if (xhr.status < 200 || xhr.status >= 300) { reject(new Error(data.error || ('HTTP ' + xhr.status))); return; }
+                resolve(data);
+            };
+            xhr.onerror = () => reject(new Error('网络连接中断'));
+            xhr.send(formData);
+        });
+    },
+    paperFileContent(workspaceId, fileId) {
+        return this.get(`/api/paper/workspaces/${encodeURIComponent(workspaceId)}/files/${fileId}/content`);
+    },
+    retryPaperAnalysis(id) { return this.post(`/api/paper/workspaces/${encodeURIComponent(id)}/analysis/retry`); },
+    reclaimPaperWorkspace(id) { return this.post(`/api/paper/workspaces/${encodeURIComponent(id)}/reclaim`); },
     uploadToPod(file, podName, destDir='/tmp') {
         const fd = new FormData();
         fd.append('file', file);

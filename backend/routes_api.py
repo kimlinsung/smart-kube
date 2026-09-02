@@ -7,10 +7,10 @@ import uuid
 
 import json
 
-from flask import Blueprint, Response, jsonify, request, session, stream_with_context
+from flask import Blueprint, Response, current_app, jsonify, request, send_file, session, stream_with_context
 from werkzeug.utils import secure_filename
 
-from . import agent, audit, auth, db, k8s_client, presence
+from . import agent, audit, auth, db, jobs, k8s_client, paper_jobs, presence, task_events
 from .config import UPLOAD_DIR
 from .request_meta import client_ip
 
@@ -217,16 +217,60 @@ def cluster_info():
 # 对话
 # --------------------------------------------------------------------------------------
 
+def _current_uploaded_path(user, experiment_id):
+    file_id = session.get("uploaded_file_id")
+    script = db.get_script_file_internal(file_id, user_id=user["id"]) if file_id else None
+    if not script or script.get("experiment_id") != experiment_id:
+        latest = db.get_latest_script_file(user["id"], experiment_id=experiment_id)
+        script = db.get_script_file_internal(latest["id"], user_id=user["id"]) if latest else None
+    if not script or not os.path.isfile(script["stored_path"]):
+        legacy_path = session.get("uploaded_file")
+        return legacy_path if legacy_path and os.path.isfile(legacy_path) else None
+    session["uploaded_file_id"] = script["id"]
+    session["uploaded_file"] = script["stored_path"]
+    return script["stored_path"]
+
+
+@bp.post("/chat/tasks")
+@auth.login_required
+def start_chat_task():
+    u = request.current_user
+    data = request.get_json(force=True) or {}
+    text = (data.get("message") or "").strip()
+    if not text:
+        return jsonify({"error": "消息为空"}), 400
+    exp_id = _current_experiment_id(u)
+    active = db.find_active_task(u["id"], exp_id, "chat")
+    if active:
+        return jsonify({"error": "已有对话任务正在执行", "task": active}), 409
+    task = jobs.start_chat_task(
+        current_app._get_current_object(),
+        u,
+        text,
+        _current_uploaded_path(u, exp_id),
+        exp_id,
+        client_ip(),
+    )
+    return jsonify({"task": task}), 202
+
+
+@bp.get("/tasks")
+@auth.login_required
+def execution_tasks():
+    u = request.current_user
+    exp_id = _current_experiment_id(u)
+    return jsonify({"tasks": db.list_execution_tasks(u["id"], experiment_id=exp_id, limit=30)})
+
 @bp.post("/chat")
 @auth.login_required
 def chat():
     u = request.current_user
     data = request.get_json(force=True) or {}
     text = (data.get("message") or "").strip()
-    uploaded = session.get("uploaded_file")  # 最近一次上传的 .py 路径
     if not text:
         return jsonify({"error": "消息为空"}), 400
     exp_id = _current_experiment_id(u)
+    uploaded = _current_uploaded_path(u, exp_id)
     reply = agent.chat(
         u,
         text,
@@ -245,8 +289,8 @@ def chat_stream():
     text = (data.get("message") or "").strip()
     if not text:
         return jsonify({"error": "消息为空"}), 400
-    uploaded = session.get("uploaded_file")
     exp_id = _current_experiment_id(u)
+    uploaded = _current_uploaded_path(u, exp_id)
     source_ip = client_ip()
 
     def generate():
@@ -295,6 +339,18 @@ def clear_history():
 # 文件上传
 # --------------------------------------------------------------------------------------
 
+@bp.get("/scripts/current")
+@auth.login_required
+def current_script():
+    u = request.current_user
+    exp_id = _current_experiment_id(u)
+    script = db.get_latest_script_file(u["id"], experiment_id=exp_id)
+    if script:
+        internal = db.get_script_file_internal(script["id"], user_id=u["id"])
+        if not internal or not os.path.isfile(internal["stored_path"]):
+            script = None
+    return jsonify({"script": script})
+
 @bp.post("/upload")
 @auth.login_required
 def upload():
@@ -304,15 +360,276 @@ def upload():
     f = request.files["file"]
     if not f.filename:
         return jsonify({"error": "文件名为空"}), 400
-    fname = secure_filename(f.filename)
+    original_name = f.filename.replace("\\", "/").rsplit("/", 1)[-1][:255]
+    extension = os.path.splitext(original_name)[1].lower()
+    fname = secure_filename(original_name) or f"upload{extension or '.bin'}"
     user_dir = os.path.join(UPLOAD_DIR, str(u["id"]))
     os.makedirs(user_dir, exist_ok=True)
     save_name = f"{int(time.time())}-{uuid.uuid4().hex[:8]}-{fname}"
     save_path = os.path.join(user_dir, save_name)
     f.save(save_path)
+    exp_id = _current_experiment_id(u)
+    script = db.create_script_file(
+        u["id"],
+        exp_id,
+        original_name,
+        save_path,
+        os.path.getsize(save_path),
+    )
+    public_script = dict(script)
+    public_script.pop("stored_path", None)
+    task = db.create_execution_task(
+        u["id"],
+        exp_id,
+        "upload",
+        f"上传 {original_name}",
+        "文件已安全保存，尚未执行",
+        {"file_id": script["id"], "filename": original_name, "size": script["size"]},
+    )
+    db.update_execution_task(
+        task["id"],
+        status="succeeded",
+        progress=100,
+        detail="上传完成，等待执行指令",
+        result="文件已上传，不会自动运行",
+        started_at=task["created_at"],
+        finished_at=int(time.time()),
+    )
+    db.add_task_event(task["id"], "succeeded", "上传完成，文件尚未执行")
+    task_events.publish_task(task["id"])
+    session["uploaded_file_id"] = script["id"]
     session["uploaded_file"] = save_path
-    audit.log(u["id"], u["username"], "upload", fname)
-    return jsonify({"ok": True, "filename": fname, "path": save_path})
+    audit.log(u["id"], u["username"], "upload", original_name)
+    return jsonify({"ok": True, "filename": original_name, "script": public_script, "task": db.get_execution_task(task["id"])})
+
+
+@bp.post("/scripts/<int:file_id>/run")
+@auth.login_required
+def run_script(file_id):
+    u = request.current_user
+    exp_id = _current_experiment_id(u)
+    script = db.get_script_file_internal(file_id, user_id=u["id"])
+    if not script or script.get("experiment_id") != exp_id:
+        return jsonify({"error": "脚本不存在或不属于当前实验"}), 404
+    if not script["original_name"].lower().endswith(".py"):
+        return jsonify({"error": "直接运行仅支持 .py 文件"}), 400
+    if not os.path.isfile(script["stored_path"]):
+        return jsonify({"error": "上传文件已不存在，请重新上传"}), 410
+
+    data = request.get_json(silent=True) or {}
+    arch = (data.get("arch") or "").strip().lower() or None
+    if arch not in {None, "amd64", "arm64", "riscv64"}:
+        return jsonify({"error": "架构必须是 amd64、arm64 或 riscv64"}), 400
+    hostname = (data.get("hostname") or "").strip()[:253] or None
+    try:
+        timeout = min(600, max(10, int(data.get("timeout") or 120)))
+    except (TypeError, ValueError):
+        return jsonify({"error": "超时时间必须是整数"}), 400
+
+    active = db.find_active_task(u["id"], exp_id, "script")
+    if active:
+        return jsonify({"error": "已有脚本任务正在执行", "task": active}), 409
+    task = jobs.start_script_task(
+        current_app._get_current_object(),
+        u,
+        script,
+        exp_id,
+        {"arch": arch, "hostname": hostname, "timeout": timeout},
+        client_ip(),
+    )
+    return jsonify({"task": task}), 202
+
+
+# --------------------------------------------------------------------------------------
+# 论文工作区
+# --------------------------------------------------------------------------------------
+
+def _paper_workspace_payload(workspace, include_resources=True):
+    if not workspace:
+        return None
+    payload = dict(workspace)
+    tasks = db.list_execution_tasks(
+        workspace["user_id"], experiment_id=workspace["experiment_id"], limit=30
+    )
+    payload["tasks"] = [
+        task for task in tasks if task.get("metadata", {}).get("workspace_id") == workspace["id"]
+    ]
+    if include_resources:
+        try:
+            payload["resources"] = k8s_client.list_pods_by_experiment(workspace["experiment_id"])
+            payload["resources_available"] = True
+        except Exception:
+            payload["resources"] = []
+            payload["resources_available"] = False
+    return payload
+
+
+@bp.get("/paper/workspaces")
+@auth.login_required
+def paper_workspaces():
+    u = request.current_user
+    return jsonify({"workspaces": db.list_paper_workspaces(u["id"], limit=50)})
+
+
+@bp.post("/paper/workspaces")
+@auth.login_required
+def create_paper_workspace():
+    u = request.current_user
+    goal = (request.form.get("goal") or "").strip()[:4000]
+    name = (request.form.get("name") or "").strip()[:120]
+    mode = (request.form.get("mode") or "").strip()
+    files = [item for item in request.files.getlist("files") if item and item.filename]
+    if mode not in {"resources", "full"}:
+        return jsonify({"error": "开始前必须选择执行至调度或完整流程"}), 400
+    if not files:
+        return jsonify({"error": "请至少上传一个输入文件"}), 400
+    if len(files) > 8:
+        return jsonify({"error": "单次工作区最多上传 8 个文件"}), 400
+    input_names = [item.filename.replace("\\", "/").rsplit("/", 1)[-1][:255] for item in files]
+    if not goal:
+        goal = f"根据输入文件 {', '.join(input_names)} 形成配置、完成调度并产出实验记录"
+    timestamp = time.strftime("%m%d-%H%M")
+    first_stem = os.path.splitext(input_names[0])[0].strip()[:72] or "论文实验"
+    workspace_name = name or f"{first_stem}-{timestamp}"
+    experiment = db.create_experiment(
+        u["id"], workspace_name, f"论文工作区：{goal[:240]}"
+    )
+    workspace = db.create_paper_workspace(
+        u["id"], experiment["id"], workspace_name, goal, mode, {}
+    )
+    workspace_dir = os.path.join(UPLOAD_DIR, str(u["id"]), "paper", workspace["id"])
+    os.makedirs(workspace_dir, exist_ok=True)
+    for index, uploaded in enumerate(files):
+        original_name = uploaded.filename.replace("\\", "/").rsplit("/", 1)[-1][:255]
+        extension = os.path.splitext(original_name)[1].lower()
+        safe_name = secure_filename(original_name) or f"input-{index + 1}{extension}"
+        stored_path = os.path.join(workspace_dir, f"{index + 1:02d}-{safe_name}")
+        uploaded.save(stored_path)
+        size = os.path.getsize(stored_path)
+        if size > 20 * 1024 * 1024:
+            os.remove(stored_path)
+            db.update_paper_workspace(workspace["id"], status="failed", stage="intake")
+            db.add_paper_workspace_event(
+                workspace["id"], "intake", "failed", f"文件 {original_name} 超过 20 MB"
+            )
+            return jsonify({"error": f"文件 {original_name} 超过 20 MB"}), 413
+        db.add_paper_workspace_file(
+            workspace["id"], u["id"], original_name, stored_path, size, uploaded.content_type or ""
+        )
+    db.add_paper_workspace_event(
+        workspace["id"], "intake", "succeeded", f"已归档 {len(files)} 个输入文件"
+    )
+    session["current_experiment_id"] = experiment["id"]
+    workspace = db.get_paper_workspace(workspace["id"], user_id=u["id"])
+    task = paper_jobs.start_workspace_job(
+        current_app._get_current_object(), workspace, u, client_ip()
+    )
+    audit.log(
+        u["id"], u["username"], "paper_workspace_create",
+        json.dumps({"workspace_id": workspace["id"], "experiment_id": experiment["id"], "mode": mode}),
+    )
+    return jsonify({"workspace": _paper_workspace_payload(workspace), "task": task}), 202
+
+
+@bp.get("/paper/workspaces/<workspace_id>")
+@auth.login_required
+def paper_workspace_detail(workspace_id):
+    u = request.current_user
+    workspace = db.get_paper_workspace(workspace_id, user_id=u["id"])
+    if not workspace:
+        return jsonify({"error": "工作区不存在"}), 404
+    return jsonify({"workspace": _paper_workspace_payload(workspace)})
+
+
+@bp.get("/paper/workspaces/<workspace_id>/files/<int:file_id>/content")
+@auth.login_required
+def paper_workspace_file_content(workspace_id, file_id):
+    u = request.current_user
+    workspace = db.get_paper_workspace(workspace_id, user_id=u["id"], include_details=False)
+    item = db.get_paper_workspace_file(file_id, user_id=u["id"])
+    if not workspace or not item or item["workspace_id"] != workspace_id:
+        return jsonify({"error": "文件不存在"}), 404
+    if not os.path.isfile(item["stored_path"]):
+        return jsonify({"error": "文件已不在服务器"}), 410
+    with open(item["stored_path"], "rb") as handle:
+        raw = handle.read(200_001)
+    if len(raw) > 200_000:
+        return jsonify({"error": "文件超过 200 KB，请下载后查看"}), 413
+    if b"\x00" in raw:
+        return jsonify({"error": "二进制文件不支持在线预览"}), 415
+    return jsonify({"content": raw.decode("utf-8", errors="replace"), "filename": item["original_name"]})
+
+
+@bp.get("/paper/workspaces/<workspace_id>/files/<int:file_id>/download")
+@auth.login_required
+def paper_workspace_file_download(workspace_id, file_id):
+    u = request.current_user
+    workspace = db.get_paper_workspace(workspace_id, user_id=u["id"], include_details=False)
+    item = db.get_paper_workspace_file(file_id, user_id=u["id"])
+    if not workspace or not item or item["workspace_id"] != workspace_id:
+        return jsonify({"error": "文件不存在"}), 404
+    if not os.path.isfile(item["stored_path"]):
+        return jsonify({"error": "文件已不在服务器"}), 410
+    return send_file(item["stored_path"], as_attachment=True, download_name=item["original_name"])
+
+
+@bp.get("/paper/workspaces/<workspace_id>/report")
+@auth.login_required
+def paper_workspace_report(workspace_id):
+    u = request.current_user
+    workspace = db.get_paper_workspace(workspace_id, user_id=u["id"], include_details=False)
+    if not workspace or not workspace.get("report_md"):
+        return jsonify({"error": "报告尚未生成"}), 404
+    return Response(
+        workspace["report_md"],
+        mimetype="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename=workspace-{workspace_id[:8]}-report.md"},
+    )
+
+
+@bp.post("/paper/workspaces/<workspace_id>/analysis/retry")
+@auth.login_required
+def retry_paper_workspace_analysis(workspace_id):
+    u = request.current_user
+    workspace = db.get_paper_workspace(workspace_id, user_id=u["id"])
+    if not workspace:
+        return jsonify({"error": "工作区不存在"}), 404
+    if workspace["mode"] != "full":
+        return jsonify({"error": "仅完整流程支持分析重试"}), 400
+    if workspace["status"] in {"queued", "running"}:
+        return jsonify({"error": "工作流仍在执行"}), 409
+    task = paper_jobs.start_analysis_retry(
+        current_app._get_current_object(), workspace, u, client_ip()
+    )
+    return jsonify({"task": task}), 202
+
+
+@bp.post("/paper/workspaces/<workspace_id>/reclaim")
+@auth.login_required
+def reclaim_paper_workspace(workspace_id):
+    u = request.current_user
+    workspace = db.get_paper_workspace(workspace_id, user_id=u["id"])
+    if not workspace:
+        return jsonify({"error": "工作区不存在"}), 404
+    if workspace["status"] in {"queued", "running"}:
+        return jsonify({"error": "工作流仍在执行，暂不能回收"}), 409
+    if workspace["resources_reclaimed"]:
+        return jsonify({"ok": True, "deleted_pods": [], "workspace": workspace})
+    try:
+        deleted = k8s_client.delete_pods_by_experiment(workspace["experiment_id"])
+    except Exception as exc:
+        return jsonify({"error": f"资源回收失败：{exc}"}), 500
+    db.update_paper_workspace(workspace_id, resources_reclaimed=True)
+    db.add_paper_workspace_event(
+        workspace_id, "lifecycle", "reclaimed", f"用户已回收 {len(deleted)} 个资源",
+        data={"deleted_pods": deleted},
+    )
+    audit.log(
+        u["id"], u["username"], "paper_workspace_reclaim",
+        json.dumps({"workspace_id": workspace_id, "deleted_pods": deleted}),
+    )
+    updated = db.get_paper_workspace(workspace_id, user_id=u["id"])
+    return jsonify({"ok": True, "deleted_pods": deleted, "workspace": _paper_workspace_payload(updated)})
 
 
 @bp.post("/upload/to_pod")
@@ -414,6 +731,10 @@ def get_experiment_detail(exp_id):
     for p in pods:
         nt = p.get("node_type") or "edge"
         counts[nt] = counts.get(nt, 0) + 1
+    paper_workspace = db.get_paper_workspace_for_experiment(
+        exp_id,
+        user_id=None if u["role"] == "admin" else u["id"],
+    )
     return jsonify({
         "experiment": {
             "id": exp["id"],
@@ -429,6 +750,7 @@ def get_experiment_detail(exp_id):
         },
         "pods": pods,
         "is_current": _current_experiment_id(u) == exp_id,
+        "paper_workspace": _paper_workspace_payload(paper_workspace, include_resources=False),
     })
 
 
@@ -459,7 +781,12 @@ def delete_experiment(exp_id):
         deleted_pods = k8s_client.delete_pods_by_experiment(exp_id)
     except Exception as e:
         return jsonify({"error": f"清理 Pod 失败：{e}"}), 500
-    db.delete_experiment(exp_id)
+    stored_paths = db.delete_experiment(exp_id)
+    for path in stored_paths:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
     # 当前实验若被删，回退到该用户的默认实验（必要时新建）
     if session.get("current_experiment_id") == exp_id:
         session["current_experiment_id"] = db.ensure_default_experiment(u["id"])

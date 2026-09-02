@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Annotated, List, TypedDict
+from typing import Annotated, Callable, List, TypedDict
 
 from langchain_core.messages import (
     AIMessage,
@@ -123,9 +123,16 @@ def chat(
     uploaded_file: str | None = None,
     experiment_id: int | None = None,
     source_ip: str = "unknown",
+    progress_callback: Callable | None = None,
 ) -> str:
     """单次对话入口：把历史 + 当前消息丢进 graph，得到最终回复。"""
-    tools_mod.set_user(user, uploaded_file=uploaded_file, experiment_id=experiment_id, source_ip=source_ip)
+    tools_mod.set_user(
+        user,
+        uploaded_file=uploaded_file,
+        experiment_id=experiment_id,
+        source_ip=source_ip,
+        progress_callback=progress_callback,
+    )
     db.add_chat(user["id"], "user", user_text, experiment_id=experiment_id)
 
     history = db.get_chat(user["id"], limit=20, experiment_id=experiment_id)
@@ -212,6 +219,7 @@ def chat_stream(
     uploaded_file: str | None = None,
     experiment_id: int | None = None,
     source_ip: str = "unknown",
+    progress_callback: Callable | None = None,
 ):
     """流式对话：yield 事件字典。
 
@@ -220,7 +228,13 @@ def chat_stream(
       {"delta": "文本片段"}         面向用户的回复 token
     结束后将完整回复存入数据库。
     """
-    tools_mod.set_user(user, uploaded_file=uploaded_file, experiment_id=experiment_id, source_ip=source_ip)
+    tools_mod.set_user(
+        user,
+        uploaded_file=uploaded_file,
+        experiment_id=experiment_id,
+        source_ip=source_ip,
+        progress_callback=progress_callback,
+    )
     db.add_chat(user["id"], "user", user_text, experiment_id=experiment_id)
 
     history = db.get_chat(user["id"], limit=20, experiment_id=experiment_id)
@@ -261,8 +275,9 @@ def chat_stream(
     except Exception as e:
         log.exception("Agent 流式调用失败")
         err = f"⚠️ 调用失败：{e}"
-        full_reply.append(err)
-        yield {"delta": err}
+        db.add_chat(user["id"], "assistant", "".join(full_reply) + err, experiment_id=experiment_id)
+        yield {"error": err}
+        return
 
     if full_reply:
         db.add_chat(user["id"], "assistant", "".join(full_reply), experiment_id=experiment_id)
