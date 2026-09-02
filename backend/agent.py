@@ -185,8 +185,29 @@ def _fallback_chat(user: dict, text: str, uploaded_file: str | None) -> str:
     return "未识别的指令"
 
 
+# 工具执行时给前端的友好状态提示
+_TOOL_LABELS = {
+    "list_my_resources":     "正在查询你的资源…",
+    "create_ssh_container":  "正在创建容器…",
+    "delete_my_pod":         "正在删除容器…",
+    "delete_all_my_pods":    "正在批量删除容器…",
+    "exec_command_in_my_pod":"正在容器内执行命令…",
+    "run_uploaded_python":   "正在运行 Python 代码…",
+    "cluster_overview":      "正在读取集群概览…",
+    "admin_list_nodes":      "正在查询集群节点…",
+    "admin_delete_node":     "正在删除节点…",
+    "admin_list_all_pods":   "正在查询全部容器…",
+}
+
+
 def chat_stream(user: dict, user_text: str, uploaded_file: str | None = None, experiment_id: int | None = None):
-    """流式对话：逐 token yield 文本片段，结束后将完整回复存入数据库。"""
+    """流式对话：yield 事件字典。
+
+    事件类型：
+      {"status": "正在创建容器…"}  工具执行阶段的进度提示（不计入最终回复）
+      {"delta": "文本片段"}         面向用户的回复 token
+    结束后将完整回复存入数据库。
+    """
     tools_mod.set_user(user, uploaded_file=uploaded_file, experiment_id=experiment_id)
     db.add_chat(user["id"], "user", user_text, experiment_id=experiment_id)
 
@@ -198,27 +219,38 @@ def chat_stream(user: dict, user_text: str, uploaded_file: str | None = None, ex
     if not api_key or api_key.startswith("sk-REPLACE"):
         reply = _fallback_chat(user, user_text, uploaded_file)
         db.add_chat(user["id"], "assistant", reply, experiment_id=experiment_id)
-        yield reply
+        yield {"delta": reply}
         return
 
     full_reply: list[str] = []
     try:
         graph = _build_graph(user)
-        for chunk, _ in graph.stream({"messages": msgs}, stream_mode="messages"):
-            if not isinstance(chunk, AIMessageChunk):
-                continue
-            # 跳过工具调用阶段生成的 chunk（不是面向用户的文本）
-            if getattr(chunk, "tool_call_chunks", None):
-                continue
-            content = chunk.content
-            if isinstance(content, str) and content:
-                full_reply.append(content)
-                yield content
+        # 同时订阅 updates（拿工具调用动作）与 messages（拿 token 流）
+        for mode, data in graph.stream({"messages": msgs}, stream_mode=["updates", "messages"]):
+            if mode == "updates":
+                for node, state in (data or {}).items():
+                    if node != "agent" or not state:
+                        continue
+                    node_msgs = state.get("messages") or []
+                    last = node_msgs[-1] if node_msgs else None
+                    for tc in (getattr(last, "tool_calls", None) or []):
+                        name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
+                        yield {"status": _TOOL_LABELS.get(name, f"正在执行：{name}…")}
+            elif mode == "messages":
+                chunk = data[0] if isinstance(data, (tuple, list)) else data
+                if not isinstance(chunk, AIMessageChunk):
+                    continue
+                if getattr(chunk, "tool_call_chunks", None):
+                    continue
+                content = chunk.content
+                if isinstance(content, str) and content:
+                    full_reply.append(content)
+                    yield {"delta": content}
     except Exception as e:
         log.exception("Agent 流式调用失败")
         err = f"⚠️ 调用失败：{e}"
         full_reply.append(err)
-        yield err
+        yield {"delta": err}
 
     if full_reply:
         db.add_chat(user["id"], "assistant", "".join(full_reply), experiment_id=experiment_id)

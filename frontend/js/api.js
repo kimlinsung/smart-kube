@@ -59,7 +59,14 @@ const API = {
         return this.upload('/api/upload/to_pod', fd);
     },
 
-    logs() { return this.get('/api/logs'); },
+    logs(params={}) {
+        const qs = new URLSearchParams();
+        Object.entries(params).forEach(([key, value]) => {
+            if (value !== '' && value != null) qs.set(key, value);
+        });
+        const query = qs.toString();
+        return this.get('/api/logs' + (query ? '?' + query : ''));
+    },
 
     adminNodes() { return this.get('/api/admin/nodes'); },
     adminCordonNode(name) { return this.request('POST', `/api/admin/nodes/${encodeURIComponent(name)}/cordon`); },

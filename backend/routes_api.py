@@ -10,7 +10,7 @@ import json
 from flask import Blueprint, Response, jsonify, request, session, stream_with_context
 from werkzeug.utils import secure_filename
 
-from . import agent, auth, db, k8s_client
+from . import agent, auth, db, k8s_client, presence
 from .config import UPLOAD_DIR
 
 bp = Blueprint("api", __name__, url_prefix="/api")
@@ -243,8 +243,11 @@ def chat_stream():
 
     def generate():
         try:
-            for token in agent.chat_stream(u, text, uploaded_file=uploaded, experiment_id=exp_id):
-                yield f"data: {json.dumps({'delta': token}, ensure_ascii=False)}\n\n"
+            for ev in agent.chat_stream(u, text, uploaded_file=uploaded, experiment_id=exp_id):
+                # 兼容：若底层仍 yield 纯字符串，则包一层 delta
+                if isinstance(ev, str):
+                    ev = {"delta": ev}
+                yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
         finally:
@@ -336,9 +339,21 @@ def upload_to_pod():
 @auth.login_required
 def logs():
     u = request.current_user
-    if u["role"] == "admin":
-        return jsonify({"logs": db.get_audit_logs()})
-    return jsonify({"logs": db.get_audit_logs(user_id=u["id"])})
+    page = max(1, request.args.get("page", 1, type=int) or 1)
+    page_size = min(100, max(10, request.args.get("page_size", 20, type=int) or 20))
+    start_at = request.args.get("start_at", type=int)
+    end_at = request.args.get("end_at", type=int)
+    result = db.search_audit_logs(
+        user_id=None if u["role"] == "admin" else u["id"],
+        username=(request.args.get("username") or "").strip() if u["role"] == "admin" else "",
+        action=(request.args.get("action") or "").strip(),
+        keyword=(request.args.get("keyword") or "").strip()[:200],
+        start_at=start_at,
+        end_at=end_at,
+        page=page,
+        page_size=page_size,
+    )
+    return jsonify(result)
 
 
 # --------------------------------------------------------------------------------------
@@ -494,7 +509,21 @@ def admin_pods():
 @bp.get("/admin/users")
 @auth.admin_required
 def admin_users():
-    return jsonify({"users": auth.list_users()})
+    users = auth.list_users()
+    unit_counts: dict[str, int] = {}
+    units_available = True
+    try:
+        for pod in k8s_client.list_user_pods(request.current_user, all_users=True):
+            owner_id = str(pod.get("owner_id") or "")
+            unit_counts[owner_id] = unit_counts.get(owner_id, 0) + 1
+    except Exception:
+        units_available = False
+
+    online_ids = presence.online_user_ids()
+    for user in users:
+        user["online"] = user["id"] in online_ids
+        user["unit_count"] = unit_counts.get(str(user["id"]), 0) if units_available else None
+    return jsonify({"users": users, "units_available": units_available})
 
 
 @bp.post("/admin/users")

@@ -13,7 +13,7 @@ from flask import Flask, redirect, send_from_directory, session
 from flask_cors import CORS
 from flask_sock import Sock
 
-from . import auth, db, k8s_client, routes_api, routes_feishu, routes_shell
+from . import auth, db, k8s_client, presence, routes_api, routes_feishu, routes_shell
 from .config import FLASK_CONF, FRONTEND_DIR
 
 
@@ -26,6 +26,7 @@ def create_app() -> Flask:
     app = Flask(__name__, static_folder=None)
     app.secret_key = FLASK_CONF.get("secret_key", "smart-kube-secret")
     app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024  # 64MB 上传上限
+    app.config["SOCK_SERVER_OPTIONS"] = {"ping_interval": 25}
     CORS(app, supports_credentials=True)
 
     # 初始化 DB 与默认管理员、ns
@@ -52,6 +53,7 @@ def create_app() -> Flask:
     # 注册 WebSocket
     sock = Sock(app)
     routes_shell.register(sock)
+    presence.register(sock)
 
     # ---- 静态前端 ----
     @app.route("/")

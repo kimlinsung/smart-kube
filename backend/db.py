@@ -140,6 +140,84 @@ def get_audit_logs(user_id=None, limit=200):
         return [dict(r) for r in cur.fetchall()]
 
 
+def search_audit_logs(
+    user_id=None,
+    username="",
+    action="",
+    keyword="",
+    start_at=None,
+    end_at=None,
+    page=1,
+    page_size=20,
+):
+    """筛选并分页读取审计日志，同时返回当前权限范围内的筛选项。"""
+    page = max(1, int(page or 1))
+    page_size = min(100, max(10, int(page_size or 20)))
+    clauses: list[str] = []
+    params: list[object] = []
+
+    if user_id is not None:
+        clauses.append("user_id=?")
+        params.append(user_id)
+    if username:
+        clauses.append("username=?")
+        params.append(username)
+    if action:
+        clauses.append("action=?")
+        params.append(action)
+    if keyword:
+        pattern = f"%{keyword}%"
+        clauses.append("(username LIKE ? OR action LIKE ? OR detail LIKE ?)")
+        params.extend((pattern, pattern, pattern))
+    if start_at is not None:
+        clauses.append("created_at>=?")
+        params.append(int(start_at))
+    if end_at is not None:
+        clauses.append("created_at<=?")
+        params.append(int(end_at))
+
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    scope_where = " WHERE user_id=?" if user_id is not None else ""
+    scope_params = (user_id,) if user_id is not None else ()
+
+    with cursor() as cur:
+        cur.execute(f"SELECT COUNT(*) AS c FROM audit_logs{where}", params)
+        total = int(cur.fetchone()["c"])
+        pages = max(1, (total + page_size - 1) // page_size)
+        page = min(page, pages)
+        offset = (page - 1) * page_size
+        cur.execute(
+            f"SELECT * FROM audit_logs{where} ORDER BY id DESC LIMIT ? OFFSET ?",
+            (*params, page_size, offset),
+        )
+        logs = [dict(r) for r in cur.fetchall()]
+        cur.execute(
+            f"SELECT DISTINCT username FROM audit_logs{scope_where} "
+            "WHERE username IS NOT NULL AND username!='' ORDER BY username"
+            if scope_where == "" else
+            "SELECT DISTINCT username FROM audit_logs WHERE user_id=? "
+            "AND username IS NOT NULL AND username!='' ORDER BY username",
+            scope_params,
+        )
+        usernames = [r["username"] for r in cur.fetchall()]
+        cur.execute(
+            f"SELECT DISTINCT action FROM audit_logs{scope_where} "
+            + ("WHERE " if not scope_where else "AND ")
+            + "action IS NOT NULL AND action!='' ORDER BY action",
+            scope_params,
+        )
+        actions = [r["action"] for r in cur.fetchall()]
+
+    return {
+        "logs": logs,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "pages": pages,
+        "facets": {"usernames": usernames, "actions": actions},
+    }
+
+
 def add_chat(user_id, role, content, experiment_id=None):
     with cursor() as cur:
         cur.execute(

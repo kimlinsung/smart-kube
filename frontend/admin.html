@@ -26,37 +26,6 @@
         </div>
       </div>
 
-      <div class="card">
-        <div class="card-head">
-          <h2><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5 9 5 9-5zM3 8v8l9 5 9-5V8"/></svg>所有用户的 Units</h2>
-        </div>
-        <div class="card-body flush">
-          <table>
-            <thead><tr><th>名称</th><th>所属</th><th>状态</th><th>节点类型</th><th>节点</th><th>架构</th><th>类型</th><th>操作</th></tr></thead>
-            <tbody id="podsBody"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-head">
-          <h2><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/></svg>用户管理</h2>
-        </div>
-        <div class="card-body">
-          <div class="form-row">
-            <span class="label">新建用户</span>
-            <input id="nu" placeholder="用户名" />
-            <input id="np" placeholder="密码" type="password" />
-            <select id="nr"><option value="user">普通用户</option><option value="admin">管理员</option></select>
-            <button id="createUser" class="primary btn-sm">创建</button>
-          </div>
-          <table>
-            <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>创建时间</th><th>操作</th></tr></thead>
-            <tbody id="usersBody"></tbody>
-          </table>
-        </div>
-      </div>
-
     </div>
   </div>
 </div>
@@ -105,96 +74,12 @@ document.getElementById('nodesBody').addEventListener('click', async e => {
     else if (act === 'uncordon') { try { await API.adminUncordonNode(name); loadNodes(); } catch (err) { alert(err.message); } }
 });
 
-async function loadAllPods(silent = false) {
-    const body = document.getElementById('podsBody');
-    if (!silent) body.innerHTML = '<tr class="loading-row"><td colspan="8"><span class="spinner"></span> 加载中…</td></tr>';
-    try {
-        const r = await API.adminPods();
-        body.innerHTML = '';
-        if (!r.pods.length) { body.innerHTML = '<tr><td colspan="8" style="color:var(--muted)">暂无 Units</td></tr>'; return; }
-        groupByNodeType(r.pods).forEach(({ type, items }) => {
-            body.insertAdjacentHTML('beforeend', ntGroupHeaderHTML(type, items.length, 8));
-            items.forEach(p => {
-                const tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td><code>${escapeHtml(p.name)}</code></td>
-                    <td>${escapeHtml(p.owner_username||'-')}</td>
-                    <td>${badgePhase(p.phase, p.name)}</td>
-                    <td>${badgeNodeType(p.node_type)}</td>
-                    <td>${escapeHtml(p.node||'-')}</td>
-                    <td>${escapeHtml(p.arch||'-')}</td>
-                    <td><span class="badge badge-blue">${escapeHtml(p.kind||'-')}</span></td>
-                    <td><div class="row-actions"><button class="danger" data-name="${escapeHtml(p.name)}">删除</button></div></td>`;
-                body.appendChild(tr);
-            });
-        });
-        bindPhaseHover(body);
-    } catch (e) { if (!silent) body.innerHTML = `<tr><td colspan="8" style="color:var(--danger)">${escapeHtml(e.message)}</td></tr>`; }
-}
-document.getElementById('podsBody').addEventListener('click', async e => {
-    const btn = e.target.closest('button'); if (!btn) return;
-    const name = btn.dataset.name;
-    if (!confirm(`确认删除 Units ${name}？`)) return;
-    try { await API.deleteResource(name); loadAllPods(); } catch (err) { alert(err.message); }
-});
-
-let MY_ID = null;
-async function loadUsers() {
-    const body = document.getElementById('usersBody');
-    body.innerHTML = '<tr class="loading-row"><td colspan="5"><span class="spinner"></span> 加载中…</td></tr>';
-    try {
-        const r = await API.adminUsers();
-        body.innerHTML = '';
-        r.users.forEach(u => {
-            const tr = document.createElement('tr');
-            const isSelf = u.id === MY_ID;
-            const toggleRole = u.role === 'admin' ? 'user' : 'admin';
-            const toggleLabel = u.role === 'admin' ? '降为普通用户' : '设为管理员';
-            const roleBtn = isSelf ? '' : `<button data-act="role" data-id="${u.id}" data-name="${escapeHtml(u.username)}" data-role="${toggleRole}">${toggleLabel}</button>`;
-            tr.innerHTML = `
-                <td>${u.id}</td>
-                <td>${escapeHtml(u.username)}</td>
-                <td><span class="badge ${u.role==='admin'?'badge-blue':'badge-green'}">${u.role}</span></td>
-                <td>${fmtTime(u.created_at)}</td>
-                <td><div class="row-actions">
-                    <button data-act="pwd" data-id="${u.id}" data-name="${escapeHtml(u.username)}">重置密码</button>
-                    ${roleBtn}
-                    ${u.role==='admin' ? '' : `<button class="danger" data-act="del" data-id="${u.id}">删除</button>`}
-                </div></td>`;
-            body.appendChild(tr);
-        });
-    } catch (e) { body.innerHTML = `<tr><td colspan="5" style="color:var(--danger)">${escapeHtml(e.message)}</td></tr>`; }
-}
-document.getElementById('usersBody').addEventListener('click', async e => {
-    const btn = e.target.closest('button'); if (!btn) return;
-    const { act, id, name, role } = btn.dataset;
-    if (act === 'del') { if (!confirm(`删除用户 ${name || id}？`)) return; try { await API.adminDeleteUser(id); loadUsers(); } catch (err) { alert(err.message); } }
-    else if (act === 'pwd') {
-        const newPwd = prompt(`为用户 "${name}" 设置新密码（至少 6 位）：`); if (newPwd === null) return;
-        if (newPwd.length < 6) { alert('密码长度不能少于 6 位'); return; }
-        try { await API.adminChangePassword(id, newPwd); alert('密码已修改'); } catch (err) { alert(err.message); }
-    } else if (act === 'role') {
-        const tip = role === 'admin' ? `将用户 "${name}" 设为管理员？` : `将管理员 "${name}" 降为普通用户？`;
-        if (!confirm(tip)) return;
-        try { await API.adminSetUserRole(id, role); loadUsers(); } catch (err) { alert(err.message); }
-    }
-});
-document.getElementById('createUser').onclick = async () => {
-    const u = document.getElementById('nu').value.trim();
-    const p = document.getElementById('np').value;
-    const r = document.getElementById('nr').value;
-    if (!u || !p) return alert('用户名/密码不能为空');
-    try { await API.adminCreateUser(u, p, r); document.getElementById('nu').value = ''; document.getElementById('np').value = ''; loadUsers(); }
-    catch (err) { alert(err.message); }
-};
 document.getElementById('refreshNodes').onclick = loadNodes;
 
 (async () => {
     const me = await loadMe();
     if (me.role !== 'admin') { alert('需要管理员权限'); window.location.href = '/dashboard.html'; return; }
-    MY_ID = me.id;
-    loadNodes(); loadAllPods(); loadUsers();
-    startPolling(() => loadAllPods(true), 15000);
+    loadNodes();
 })();
 </script>
 </body>

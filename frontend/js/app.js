@@ -20,6 +20,17 @@ const ICONS = {
 function icon(name, cls = '') {
     return `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ''}</svg>`;
 }
+function brandMark() {
+    return `<span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="5.5" r="2.25"/>
+            <circle cx="5.5" cy="17.5" r="2.25"/>
+            <circle cx="18.5" cy="17.5" r="2.25"/>
+            <path d="M10.9 7.5 6.6 15.5M13.1 7.5l4.3 8M7.8 17.5h8.4"/>
+            <path d="M12 11.2l2.1 1.2v2.4L12 16l-2.1-1.2v-2.4L12 11.2z"/>
+        </svg>
+    </span>`;
+}
 
 // ---------- 导航 & 页面元信息 ----------
 const NAV = [
@@ -27,22 +38,53 @@ const NAV = [
     { key: 'experiments', href: '/experiments.html', label: '实验管理', ico: 'experiments' },
     { key: 'logs',        href: '/logs.html',        label: '操作日志', ico: 'logs' },
     { key: 'admin',       href: '/admin.html',       label: '集群管理', ico: 'admin', admin: true },
+    { key: 'all_units',   href: '/all_units.html',   label: '全部 Units', ico: 'box', admin: true },
+    { key: 'users',       href: '/users.html',       label: '用户管理', ico: 'users', admin: true },
 ];
 const PAGE_META = {
     dashboard:         { nav: 'dashboard',   title: '我的资源',   sub: '管理你的云 / 边 / 端容器实例' },
     experiments:       { nav: 'experiments', title: '实验管理',   sub: '组织与切换你的实验环境' },
     experiment_detail: { nav: 'experiments', title: '实验详情',   sub: '实验内的云边端资源明细' },
     logs:              { nav: 'logs',        title: '操作日志',   sub: '系统操作审计记录' },
-    admin:             { nav: 'admin',       title: '集群管理',   sub: '节点 / 全部容器 / 用户管理' },
+    admin:             { nav: 'admin',       title: '集群管理',   sub: '集群节点状态与调度控制' },
+    all_units:         { nav: 'all_units',   title: '全部 Units', sub: '管理所有用户的云 / 边 / 端容器' },
+    users:             { nav: 'users',       title: '用户管理',   sub: '平台账号、角色与访问权限' },
 };
 
 let ME = window.ME || null;
+let _presenceSocket = null;
+let _presenceRetryTimer = null;
+let _presenceRetryDelay = 1000;
+
+function connectPresence() {
+    if (!ME || !('WebSocket' in window)) return;
+    if (_presenceSocket && (_presenceSocket.readyState === WebSocket.OPEN || _presenceSocket.readyState === WebSocket.CONNECTING)) return;
+    if (_presenceRetryTimer) { clearTimeout(_presenceRetryTimer); _presenceRetryTimer = null; }
+    const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+    const socket = new WebSocket(`${protocol}://${location.host}/ws/presence`);
+    _presenceSocket = socket;
+    socket.onopen = () => { _presenceRetryDelay = 1000; };
+    socket.onmessage = event => {
+        try {
+            const detail = JSON.parse(event.data);
+            window.dispatchEvent(new CustomEvent('presence:update', { detail }));
+        } catch (_) { /* ignore malformed presence events */ }
+    };
+    socket.onclose = () => {
+        if (_presenceSocket !== socket) return;
+        _presenceSocket = null;
+        _presenceRetryTimer = setTimeout(connectPresence, _presenceRetryDelay);
+        _presenceRetryDelay = Math.min(_presenceRetryDelay * 2, 30000);
+    };
+}
+window.addEventListener('online', connectPresence);
 
 async function loadMe() {
     try {
         const me = await API.me();
         ME = me; window.ME = me;
         renderShell(me);
+        connectPresence();
         return me;
     } catch (e) {
         window.location.href = '/login.html';
@@ -72,7 +114,7 @@ function renderShell(me) {
             </a>` : '';
         sidebar.innerHTML = `
             <div class="sidebar-brand">
-                <span class="brand-mark"></span>
+                ${brandMark()}
                 <span class="brand-text"><span class="t1">智能云边端</span><span class="t2">CLOUD · EDGE · DEVICE</span></span>
             </div>
             <div class="sidebar-section">导航</div>

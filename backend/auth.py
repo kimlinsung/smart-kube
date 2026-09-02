@@ -47,7 +47,13 @@ def create_user(username, password, role="user"):
 
 def list_users():
     with db.cursor() as cur:
-        cur.execute("SELECT id, username, role, created_at FROM users ORDER BY id")
+        cur.execute(
+            "SELECT u.id, u.username, u.role, u.created_at, "
+            "(SELECT MAX(a.created_at) FROM audit_logs a "
+            " WHERE a.user_id=u.id AND a.action IN ('login','login_feishu')) AS last_login_at, "
+            "(SELECT COUNT(*) FROM experiments e WHERE e.user_id=u.id) AS experiment_count "
+            "FROM users u ORDER BY u.id"
+        )
         return [dict(r) for r in cur.fetchall()]
 
 

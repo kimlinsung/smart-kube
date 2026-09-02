@@ -13,7 +13,7 @@
     <header class="topbar" id="topbar"></header>
     <div class="content">
 
-      <div class="card">
+      <div class="card log-card">
         <div class="card-head">
           <h2><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2M8 11h8M8 15h6"/></svg>操作日志</h2>
           <div class="right">
@@ -21,11 +21,47 @@
             <button id="refresh" class="btn-sm btn-ghost">刷新</button>
           </div>
         </div>
-        <div class="card-body flush">
+        <div class="log-filters">
+          <div class="filter-field" id="userFilterWrap" hidden>
+            <label for="userFilter">用户</label>
+            <select id="userFilter"><option value="">全部用户</option></select>
+          </div>
+          <div class="filter-field">
+            <label for="actionFilter">动作</label>
+            <select id="actionFilter"><option value="">全部动作</option></select>
+          </div>
+          <div class="filter-field">
+            <label for="startDate">开始日期</label>
+            <input id="startDate" type="date" />
+          </div>
+          <div class="filter-field">
+            <label for="endDate">结束日期</label>
+            <input id="endDate" type="date" />
+          </div>
+          <div class="filter-field keyword-field">
+            <label for="keyword">关键字</label>
+            <input id="keyword" type="search" placeholder="搜索动作或详情" />
+          </div>
+          <div class="filter-actions">
+            <button id="resetFilters" class="btn-sm">重置</button>
+            <button id="applyFilters" class="primary btn-sm">筛选</button>
+          </div>
+        </div>
+        <div class="card-body flush table-scroll">
           <table>
             <thead><tr><th>时间</th><th>用户</th><th>动作</th><th>详情</th></tr></thead>
             <tbody id="body"><tr class="loading-row"><td colspan="4"><span class="spinner"></span> 加载中…</td></tr></tbody>
           </table>
+        </div>
+        <div class="log-pager">
+          <span id="pageSummary">共 0 条</span>
+          <div class="pager-controls">
+            <label for="pageSize">每页</label>
+            <select id="pageSize"><option value="10">10</option><option value="20" selected>20</option><option value="50">50</option><option value="100">100</option></select>
+            <button id="prevPage" class="icon-btn" title="上一页" aria-label="上一页"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg></button>
+            <div class="page-numbers" id="pageNumbers"></div>
+            <button id="nextPage" class="icon-btn" title="下一页" aria-label="下一页"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></button>
+          </div>
         </div>
       </div>
 
@@ -37,11 +73,66 @@
 <script src="/js/app.js"></script>
 <script src="/js/chat.js"></script>
 <script>
-async function load() {
+const state = { page: 1, pageSize: 20, pages: 1, total: 0, isAdmin: false };
+
+function localDayEpoch(value, endOfDay = false) {
+    if (!value) return null;
+    const [year, month, day] = value.split('-').map(Number);
+    const date = endOfDay
+        ? new Date(year, month - 1, day, 23, 59, 59, 999)
+        : new Date(year, month - 1, day, 0, 0, 0, 0);
+    return Math.floor(date.getTime() / 1000);
+}
+
+function setOptions(select, values, allLabel) {
+    const current = select.value;
+    select.innerHTML = `<option value="">${allLabel}</option>` + values
+        .map(value => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`)
+        .join('');
+    if (values.includes(current)) select.value = current;
+}
+
+function queryParams() {
+    return {
+        page: state.page,
+        page_size: state.pageSize,
+        username: state.isAdmin ? document.getElementById('userFilter').value : '',
+        action: document.getElementById('actionFilter').value,
+        keyword: document.getElementById('keyword').value.trim(),
+        start_at: localDayEpoch(document.getElementById('startDate').value),
+        end_at: localDayEpoch(document.getElementById('endDate').value, true),
+    };
+}
+
+function renderPager() {
+    document.getElementById('pageSummary').textContent = `共 ${state.total} 条 · 第 ${state.page} / ${state.pages} 页`;
+    document.getElementById('prevPage').disabled = state.page <= 1;
+    document.getElementById('nextPage').disabled = state.page >= state.pages;
+    let start = Math.max(1, state.page - 2);
+    let end = Math.min(state.pages, start + 4);
+    start = Math.max(1, end - 4);
+    const pages = [];
+    for (let page = start; page <= end; page += 1) {
+        pages.push(`<button class="page-number${page === state.page ? ' active' : ''}" data-page="${page}" aria-label="第 ${page} 页">${page}</button>`);
+    }
+    document.getElementById('pageNumbers').innerHTML = pages.join('');
+}
+
+async function load(resetPage = false) {
+    if (resetPage) state.page = 1;
+    const startAt = localDayEpoch(document.getElementById('startDate').value);
+    const endAt = localDayEpoch(document.getElementById('endDate').value, true);
+    if (startAt && endAt && startAt > endAt) { alert('开始日期不能晚于结束日期'); return; }
     const body = document.getElementById('body');
     body.innerHTML = '<tr class="loading-row"><td colspan="4"><span class="spinner"></span> 加载中…</td></tr>';
     try {
-        const r = await API.logs();
+        const r = await API.logs(queryParams());
+        state.page = r.page;
+        state.pageSize = r.page_size;
+        state.pages = r.pages;
+        state.total = r.total;
+        setOptions(document.getElementById('actionFilter'), r.facets.actions || [], '全部动作');
+        if (state.isAdmin) setOptions(document.getElementById('userFilter'), r.facets.usernames || [], '全部用户');
         body.innerHTML = '';
         r.logs.forEach(l => {
             const tr = document.createElement('tr');
@@ -53,10 +144,42 @@ async function load() {
             body.appendChild(tr);
         });
         if (!r.logs.length) body.innerHTML = `<tr><td colspan="4"><div class="empty-state"><div class="t">暂无日志</div></div></td></tr>`;
+        renderPager();
     } catch (e) { body.innerHTML = `<tr><td colspan="4" style="color:var(--danger)">${escapeHtml(e.message)}</td></tr>`; }
 }
-document.getElementById('refresh').onclick = load;
-(async () => { await loadMe(); load(); })();
+
+document.getElementById('refresh').onclick = () => load();
+document.getElementById('applyFilters').onclick = () => load(true);
+document.getElementById('resetFilters').onclick = () => {
+    ['userFilter', 'actionFilter', 'startDate', 'endDate', 'keyword'].forEach(id => {
+        const element = document.getElementById(id);
+        if (element) element.value = '';
+    });
+    load(true);
+};
+document.getElementById('keyword').addEventListener('keydown', event => {
+    if (event.key === 'Enter') load(true);
+});
+document.getElementById('pageSize').onchange = event => {
+    state.pageSize = Number(event.target.value);
+    load(true);
+};
+document.getElementById('prevPage').onclick = () => { if (state.page > 1) { state.page -= 1; load(); } };
+document.getElementById('nextPage').onclick = () => { if (state.page < state.pages) { state.page += 1; load(); } };
+document.getElementById('pageNumbers').onclick = event => {
+    const button = event.target.closest('[data-page]');
+    if (!button) return;
+    state.page = Number(button.dataset.page);
+    load();
+};
+
+(async () => {
+    const me = await loadMe();
+    if (!me) return;
+    state.isAdmin = me.role === 'admin';
+    document.getElementById('userFilterWrap').hidden = !state.isAdmin;
+    load();
+})();
 </script>
 </body>
 </html>

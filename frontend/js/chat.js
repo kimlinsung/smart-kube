@@ -170,8 +170,14 @@ function injectAssistant() {
         showSuggest();
 
         const { bubble } = append('assistant', '');
-        bubble.classList.remove('md');
-        bubble.innerHTML = '<span class="spinner"></span> 思考中…';
+        // 生成中指示器：三点跳动 + 状态文案，直到首个正文 token 到达
+        function setThinking(text) {
+            bubble.classList.remove('md');
+            bubble.innerHTML = `<span class="a-typing"><i></i><i></i><i></i></span><span class="a-typing-text"></span>`;
+            bubble.querySelector('.a-typing-text').textContent = text || 'AI 正在思考…';
+            msgsEl.scrollTop = msgsEl.scrollHeight;
+        }
+        setThinking('AI 正在思考…');
 
         let started = false, acc = '', renderTimer = null;
         const scheduleRender = (force) => {
@@ -179,6 +185,16 @@ function injectAssistant() {
             if (renderTimer) return;
             renderTimer = setTimeout(() => { renderTimer = null; renderBubbleMarkdown(bubble, acc); msgsEl.scrollTop = msgsEl.scrollHeight; }, 60);
         };
+        function showStatus(text) {
+            if (!started) { setThinking(text); return; }
+            scheduleRender(true);
+            const status = document.createElement('div');
+            status.className = 'a-tool-status';
+            status.innerHTML = '<span class="a-typing"><i></i><i></i><i></i></span><span class="a-typing-text"></span>';
+            status.querySelector('.a-typing-text').textContent = text;
+            bubble.appendChild(status);
+            msgsEl.scrollTop = msgsEl.scrollHeight;
+        }
 
         try {
             const resp = await fetch('/api/chat/stream', {
@@ -204,7 +220,13 @@ function injectAssistant() {
                     if (payload === '[DONE]') break outer;
                     let parsed; try { parsed = JSON.parse(payload); } catch { continue; }
                     if (parsed.error) { bubble.classList.remove('md'); bubble.textContent = '错误：' + parsed.error; break outer; }
-                    if (parsed.delta) { if (!started) { acc = ''; started = true; } acc += parsed.delta; scheduleRender(false); }
+                    // 工具调用前模型可能已输出引导语；此时在正文下方追加临时进度行
+                    if (parsed.status) { showStatus(parsed.status); continue; }
+                    if (parsed.delta) {
+                        bubble.querySelector('.a-tool-status')?.remove();
+                        if (!started) { acc = ''; started = true; }
+                        acc += parsed.delta; scheduleRender(false);
+                    }
                 }
             }
             await MD.ready();
