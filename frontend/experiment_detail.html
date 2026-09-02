@@ -115,12 +115,13 @@ function renderPods() {
     bindPhaseHover(body);
 }
 
-async function loadDetail() {
+async function loadDetail(silent = false) {
     try {
         DETAIL = await API.getExperiment(EXP_ID);
         renderHead();
         renderPods();
     } catch (e) {
+        if (silent) return;  // 后台轮询失败时不打断当前视图
         document.getElementById('expName').textContent = '加载失败';
         document.getElementById('expMeta').innerHTML =
             `<span style="color:#dc2626;">${escapeHtml(e.message)}</span>`;
@@ -166,7 +167,7 @@ document.getElementById('btnEnter').onclick = async () => {
     } catch (err) { alert('进入失败：' + err.message); }
 };
 
-window.addEventListener('chat:done', loadDetail);
+window.addEventListener('chat:done', () => loadDetail(true));
 
 (async () => {
     if (!EXP_ID) {
@@ -180,7 +181,7 @@ window.addEventListener('chat:done', loadDetail);
     ME = await loadMe();
     if (!ME) return;
     await loadDetail();
-    setInterval(loadDetail, 15000);
+    startPolling(() => loadDetail(true), 15000);
 })();
 </script>
 </body>

@@ -1,2 +1,15 @@
+# ---- 依赖 / 虚拟环境 ----
 .venv/
+__pycache__/
+*.pyc
+
+# ---- 运行时数据（每台机器独立，绝不进 git）----
 data/
+uploads/
+
+# ---- 配置（含密钥，只留本地，用 config.yaml.example 作模板）----
+config.yaml
+config.local.yaml
+
+# ---- 系统杂项 ----
+.DS_Store

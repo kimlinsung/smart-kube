@@ -69,9 +69,9 @@ function renderPodRow(p) {
         </td>`;
 }
 
-async function loadPods() {
+async function loadPods(silent = false) {
     const body = document.getElementById('podsBody');
-    body.innerHTML = '<tr><td colspan="9">加载中...</td></tr>';
+    if (!silent) body.innerHTML = '<tr><td colspan="9">加载中...</td></tr>';
     try {
         const r = await API.listResources();
         if (!r.pods.length) {
@@ -89,7 +89,7 @@ async function loadPods() {
         });
         bindPhaseHover(body);
     } catch (e) {
-        body.innerHTML = `<tr><td colspan="9" style="color:#dc2626">加载失败：${e.message}</td></tr>`;
+        if (!silent) body.innerHTML = `<tr><td colspan="9" style="color:#dc2626">加载失败：${e.message}</td></tr>`;
     }
 }
 
@@ -118,14 +118,15 @@ document.getElementById('hiddenUpload').onchange = async e => {
     e.target.value = '';
 };
 
-document.getElementById('refresh').onclick = loadPods;
-window.addEventListener('chat:done', loadPods);
+document.getElementById('refresh').onclick = () => loadPods(true);
+window.addEventListener('chat:done', () => loadPods(true));
 
 (async () => {
     await loadMe();
     await loadCluster();
     await loadPods();
-    setInterval(loadPods, 15000);  // 周期刷新状态
+    // 静默轮询：不闪“加载中”，隐藏标签页时自动暂停。
+    startPolling(() => loadPods(true), 15000);
 })();
 </script>
 </body>

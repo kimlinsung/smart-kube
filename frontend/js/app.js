@@ -161,6 +161,21 @@ function escapeHtml(s) {
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// ---------- 可见性感知的轮询 ----------
+// 标签页隐藏时暂停轮询（省资源、避免后台空转），切回前台时立即刷新一次再继续。
+// 返回 { stop, refresh }。fn 内部应自行做“静默刷新”（不清空为“加载中”）。
+function startPolling(fn, ms) {
+    let timer = null;
+    const start = () => { if (timer == null) timer = setInterval(() => { if (!document.hidden) fn(); }, ms); };
+    const stop  = () => { if (timer != null) { clearInterval(timer); timer = null; } };
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) { stop(); }
+        else { fn(); start(); }
+    });
+    start();
+    return { stop, refresh: fn };
+}
+
 function fmtTime(s) {
     if (!s) return '-';
     if (typeof s === 'number') return new Date(s*1000).toLocaleString();

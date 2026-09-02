@@ -32,59 +32,60 @@
       padding: 12px 14px;
       background: #eef2ff;
       border: 1px solid #c7d2fe;
-      border-radius: 8px;
+      border-radius: 6px;
       font-size: 12.5px;
       line-height: 1.65;
-      color: #3730a3;
+      color: #1e3a8a;
       display: flex; gap: 10px; align-items: flex-start;
   }
-  .temp-acct-note svg { flex-shrink: 0; margin-top: 1px; color: #6366f1; }
+  .temp-acct-note svg { flex-shrink: 0; margin-top: 1px; color: #1f3a8a; }
   .temp-acct-note a {
-      color: #4338ca; font-weight: 600;
-      border-bottom: 1px dashed #818cf8;
+      color: #1f3a8a; font-weight: 600;
+      border-bottom: 1px dashed #93a4d6;
   }
-  .temp-acct-note a:hover { color: #312e81; text-decoration: none; }
-  .temp-acct-note b { color: #1e1b4b; }
+  .temp-acct-note a:hover { color: #15306f; text-decoration: none; }
+  .temp-acct-note b { color: #15306f; }
 
-  /* 返回欢迎页链接 */
+  /* 返回欢迎页链接（浅色背景版本） */
   .back-home {
       position: absolute; top: 20px; left: 24px;
-      color: rgba(255,255,255,.75);
+      color: #4b5563;
       font-size: 13px;
       display: inline-flex; align-items: center; gap: 6px;
-      padding: 6px 12px; border-radius: 8px;
-      background: rgba(255,255,255,.06);
-      border: 1px solid rgba(255,255,255,.10);
-      transition: background .15s ease, color .15s ease;
+      padding: 6px 12px; border-radius: 6px;
+      background: #ffffff;
+      border: 1px solid #e4e6eb;
+      transition: background .15s ease, color .15s ease, border-color .15s ease;
       z-index: 2;
       text-decoration: none;
   }
   .back-home:hover {
-      color: #fff; background: rgba(255,255,255,.12);
+      color: #1f3a8a; background: #f3f4f6; border-color: #d1d5db;
       text-decoration: none;
   }
 
-  /* 语言切换器（深色背景版本） */
+  /* 语言切换器（浅色背景版本） */
   .lang-switch-login {
       position: absolute; top: 20px; right: 24px;
       display: inline-flex; align-items: center;
-      border: 1px solid rgba(255,255,255,.18);
+      border: 1px solid #e4e6eb;
+      background: #ffffff;
       font-size: 12px;
       z-index: 2;
-      overflow: hidden;
+      overflow: hidden; border-radius: 6px;
   }
   .lang-switch-login a {
-      color: rgba(255,255,255,.75); text-decoration: none;
+      color: #6b7280; text-decoration: none;
       padding: 6px 12px;
-      border-left: 1px solid rgba(255,255,255,.18);
+      border-left: 1px solid #e4e6eb;
       line-height: 1.1;
   }
   .lang-switch-login a:first-child { border-left: 0; }
   .lang-switch-login a.active {
-      color: #1f3a8a; background: #ffffff; font-weight: 600;
+      color: #ffffff; background: #1f3a8a; font-weight: 600;
   }
   .lang-switch-login a:not(.active):hover {
-      color: #ffffff; background: rgba(255,255,255,.10);
+      color: #1f3a8a; background: #f3f4f6;
   }
 </style>
 </head>

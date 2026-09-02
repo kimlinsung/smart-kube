@@ -1,5 +1,67 @@
 // 全局对话弹窗：所有页面通用。
+
+// ---------- Markdown 渲染（marked + DOMPurify，CDN 懒加载） ----------
+const MD = (() => {
+    let _ready = null;
+    function _loadScript(src) {
+        return new Promise((resolve, reject) => {
+            const s = document.createElement('script');
+            s.src = src; s.async = true;
+            s.onload = resolve; s.onerror = () => reject(new Error('load fail: ' + src));
+            document.head.appendChild(s);
+        });
+    }
+    // 确保 marked / DOMPurify 就绪；失败则降级为纯文本。
+    function ready() {
+        if (_ready) return _ready;
+        _ready = (async () => {
+            try {
+                if (!window.marked) {
+                    await _loadScript('https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js');
+                }
+                if (!window.DOMPurify) {
+                    await _loadScript('https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js');
+                }
+                if (window.marked && window.marked.setOptions) {
+                    window.marked.setOptions({ breaks: true, gfm: true });
+                }
+            } catch (e) {
+                console.warn('markdown 库加载失败，降级为纯文本：', e);
+            }
+        })();
+        return _ready;
+    }
+    // 同步渲染：库未就绪时先返回转义文本，稍后由调用方在 ready() 后重渲。
+    function render(text) {
+        const src = text == null ? '' : String(text);
+        if (window.marked && window.DOMPurify) {
+            try {
+                const html = window.marked.parse(src);
+                return { html: window.DOMPurify.sanitize(html), md: true };
+            } catch (e) { /* fallthrough */ }
+        }
+        return { html: escapeHtmlLocal(src), md: false };
+    }
+    function escapeHtmlLocal(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    return { ready, render };
+})();
+
+// 把 markdown 渲染进一个气泡元素（并记录原文，便于库就绪后重渲）。
+function renderBubbleMarkdown(bubble, text) {
+    bubble.dataset.md = text == null ? '' : String(text);
+    const { html, md } = MD.render(text);
+    bubble.innerHTML = html;
+    bubble.classList.toggle('md', md);
+}
+
 function injectChat() {
+    // 预热 markdown 库
+    MD.ready();
+
     const fab = document.createElement('button');
     fab.className = 'chat-fab'; fab.textContent = '💬'; fab.title = 'AI 助手';
     document.body.appendChild(fab);
@@ -50,7 +112,13 @@ function injectChat() {
         const wrap = document.createElement('div');
         wrap.className = 'chat-bubble-wrap';
         const b = document.createElement('div');
-        b.className = 'chat-bubble'; b.textContent = content;
+        b.className = 'chat-bubble';
+        // 用户消息保持纯文本；助手消息渲染 markdown
+        if (role === 'assistant') {
+            renderBubbleMarkdown(b, content);
+        } else {
+            b.textContent = content;
+        }
         const time = document.createElement('div');
         time.className = 'chat-time'; time.textContent = fmtChatTime(ts);
         wrap.appendChild(b);
@@ -71,13 +139,12 @@ function injectChat() {
         try {
             const r = await API.upload_(fileEl.files[0]);
             hintEl.textContent = '已上传：' + r.filename;
-            hintEl.style.color = '#059669';
+            hintEl.style.color = '#047857';
         } catch (e) {
             hintEl.textContent = '上传失败：' + e.message;
             hintEl.style.color = '#dc2626';
         }
     };
-    panel.querySelector('label[for]'); // noop
 
     async function send() {
         const t = textEl.value.trim();
@@ -103,6 +170,24 @@ function injectChat() {
         msgsEl.scrollTop = msgsEl.scrollHeight;
 
         let started = false;
+        let acc = '';
+        // 流式增量到达很快，节流渲染 markdown，避免频繁重排。
+        let renderTimer = null;
+        const scheduleRender = (force) => {
+            if (force) {
+                if (renderTimer) { clearTimeout(renderTimer); renderTimer = null; }
+                renderBubbleMarkdown(bubble, acc);
+                msgsEl.scrollTop = msgsEl.scrollHeight;
+                return;
+            }
+            if (renderTimer) return;
+            renderTimer = setTimeout(() => {
+                renderTimer = null;
+                renderBubbleMarkdown(bubble, acc);
+                msgsEl.scrollTop = msgsEl.scrollHeight;
+            }, 60);
+        };
+
         try {
             const resp = await fetch('/api/chat/stream', {
                 method: 'POST',
@@ -133,17 +218,25 @@ function injectChat() {
                     if (payload === '[DONE]') break outer;
                     let parsed;
                     try { parsed = JSON.parse(payload); } catch { continue; }
-                    if (parsed.error) { bubble.textContent = '错误：' + parsed.error; break outer; }
+                    if (parsed.error) { bubble.classList.remove('md'); bubble.textContent = '错误：' + parsed.error; break outer; }
                     if (parsed.delta) {
-                        if (!started) { bubble.textContent = ''; started = true; }
-                        bubble.textContent += parsed.delta;
-                        msgsEl.scrollTop = msgsEl.scrollHeight;
+                        if (!started) { acc = ''; started = true; }
+                        acc += parsed.delta;
+                        scheduleRender(false);
                     }
                 }
             }
-            if (!started) bubble.textContent = '（无回复）';
+            // 确保库就绪后做一次最终渲染（首条消息可能库还没加载完）。
+            await MD.ready();
+            if (started) {
+                scheduleRender(true);
+            } else {
+                bubble.classList.remove('md');
+                bubble.textContent = '（无回复）';
+            }
             window.dispatchEvent(new CustomEvent('chat:done'));
         } catch (e) {
+            bubble.classList.remove('md');
             bubble.textContent = '错误：' + e.message;
         }
     }
@@ -152,13 +245,19 @@ function injectChat() {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
     });
 
-    function reloadHistory() {
+    async function reloadHistory() {
         msgsEl.innerHTML = '';
-        return API.chatHistory().then(r => {
+        try {
+            const r = await API.chatHistory();
             (r.history || []).forEach(h => {
                 if (h.role === 'user' || h.role === 'assistant') append(h.role, h.content, h.created_at);
             });
-        }).catch(()=>{});
+            // 库就绪后重渲历史里的助手消息（首次进入可能库尚未加载）。
+            await MD.ready();
+            msgsEl.querySelectorAll('.chat-msg.assistant .chat-bubble').forEach(b => {
+                if (b.dataset.md != null) renderBubbleMarkdown(b, b.dataset.md);
+            });
+        } catch (_) { /* 忽略 */ }
     }
     reloadHistory();
     window.addEventListener('experiment:changed', reloadHistory);

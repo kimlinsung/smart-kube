@@ -113,9 +113,9 @@ document.getElementById('nodesBody').addEventListener('click', async e => {
     }
 });
 
-async function loadAllPods() {
+async function loadAllPods(silent = false) {
     const body = document.getElementById('podsBody');
-    body.innerHTML = '<tr><td colspan="8">加载中...</td></tr>';
+    if (!silent) body.innerHTML = '<tr><td colspan="8">加载中...</td></tr>';
     try {
         const r = await API.adminPods();
         body.innerHTML = '';
@@ -141,7 +141,7 @@ async function loadAllPods() {
         });
         bindPhaseHover(body);
     } catch (e) {
-        body.innerHTML = `<tr><td colspan="8" style="color:#dc2626">${e.message}</td></tr>`;
+        if (!silent) body.innerHTML = `<tr><td colspan="8" style="color:#dc2626">${e.message}</td></tr>`;
     }
 }
 document.getElementById('podsBody').addEventListener('click', async e => {
@@ -218,7 +218,7 @@ document.getElementById('refreshNodes').onclick = loadNodes;
     if (me.role !== 'admin') { alert('需要管理员权限'); window.location.href = '/dashboard.html'; return; }
     MY_ID = me.id;
     loadNodes(); loadAllPods(); loadUsers();
-    setInterval(loadAllPods, 15000);
+    startPolling(() => loadAllPods(true), 15000);
 })();
 </script>
 </body>
