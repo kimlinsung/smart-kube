@@ -313,6 +313,8 @@ function injectAssistant() {
                     window.dispatchEvent(new CustomEvent('task:snapshot', { detail: payload.tasks || [] }));
                 } else if (payload.type === 'task_update') {
                     handleTask(payload.task);
+                } else if (payload.type === 'workspace_task_update') {
+                    window.dispatchEvent(new CustomEvent('task:update', { detail: payload.task }));
                 }
             } catch (_) { /* ignore malformed events */ }
         };

@@ -629,14 +629,16 @@ class PaperWorkspaceApiTest(TemporaryDatabaseTest):
         self.assertEqual(persisted["report_md"], "# persisted")
         self.assertTrue(db.get_experiment(experiment["id"]))
 
-    def test_other_user_cannot_read_workspace(self):
+    def test_admin_can_read_another_users_workspace(self):
         experiment = db.create_experiment(self.user_id + 999, "私有工作区")
         workspace = db.create_paper_workspace(
             self.user_id + 999, experiment["id"], "私有工作区", "private", "resources",
             {"cloud": {"count": 1}},
         )
-        response = self.client.get(f"/api/paper/workspaces/{workspace['id']}")
-        self.assertEqual(response.status_code, 404)
+        with mock.patch("backend.routes_api.k8s_client.list_pods_by_experiment", return_value=[]):
+            response = self.client.get(f"/api/paper/workspaces/{workspace['id']}")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["workspace"]["access_role"], "admin")
 
     def test_only_full_workflow_can_retry_analysis(self):
         full_experiment = db.create_experiment(self.user_id, "完整流程")

@@ -36,8 +36,23 @@ def publish(user_id: int, payload: dict):
 
 def publish_task(task_id: str):
     task = db.get_execution_task(task_id)
-    if task:
-        publish(task["user_id"], {"type": "task_update", "task": task})
+    if not task:
+        return
+    publish(task["user_id"], {"type": "task_update", "task": task})
+    if not task.get("experiment_id"):
+        return
+    workspace_update = {
+        "id": task["id"],
+        "experiment_id": task["experiment_id"],
+        "status": task["status"],
+        "progress": task["progress"],
+        "updated_at": task["updated_at"],
+        "metadata": {
+            "workspace_id": (task.get("metadata") or {}).get("workspace_id"),
+        },
+    }
+    for collaborator_id in db.list_experiment_collaborator_user_ids(task["experiment_id"]):
+        publish(collaborator_id, {"type": "workspace_task_update", "task": workspace_update})
 
 
 def register(sock):

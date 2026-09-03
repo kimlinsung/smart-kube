@@ -151,7 +151,7 @@
         root.innerHTML = state.summaries.map(item => `
           <button type="button" class="history-item ${escapeHtml(item.status)} ${state.workspace?.id === item.id ? 'active' : ''}" data-workspace-id="${item.id}">
             <span class="history-dot"></span>
-            <span class="history-copy"><b>${escapeHtml(item.name)}</b><small>${STATUS_LABELS[item.status] || item.status} · ${fmtTime(item.updated_at)}</small></span>
+            <span class="history-copy"><b>${escapeHtml(item.name)}</b><small>${item.access_role === 'collaborator' ? `协作 · @${escapeHtml(item.owner_username || 'unknown')} · ` : ''}${STATUS_LABELS[item.status] || item.status} · ${fmtTime(item.updated_at)}</small></span>
           </button>`).join('');
     }
 
@@ -364,8 +364,12 @@
         $('#runProgressBar').style.width = `${progress}%`;
         $('#runProgressText').textContent = task?.detail || (workspace.resources_reclaimed ? '资源已回收，实验归档仍保留' : '实验产物已持久化');
         $('#openExperiment').href = `/experiment_detail.html?id=${workspace.experiment_id}`;
-        $('#retryAnalysis').hidden = workspace.mode !== 'full' || ACTIVE.has(workspace.status);
-        $('#reclaimResources').hidden = ACTIVE.has(workspace.status) || workspace.resources_reclaimed || !(workspace.schedule_json?.created > 0);
+        const canManageSharing = ['owner', 'admin'].includes(workspace.access_role || 'owner');
+        const canOperate = (workspace.access_role || 'owner') === 'owner';
+        $('#manageSharing').hidden = !canManageSharing;
+        $('#manageSharing').href = `/experiment_detail.html?id=${workspace.experiment_id}#sharing`;
+        $('#retryAnalysis').hidden = !canOperate || workspace.mode !== 'full' || ACTIVE.has(workspace.status);
+        $('#reclaimResources').hidden = !canOperate || ACTIVE.has(workspace.status) || workspace.resources_reclaimed || !(workspace.schedule_json?.created > 0);
         renderWorkflow(workspace);
         renderArtifacts(workspace);
         renderCharts(workspace);

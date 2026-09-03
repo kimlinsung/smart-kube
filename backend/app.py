@@ -72,7 +72,9 @@ def create_app() -> Flask:
 
     # 不需要登录就能访问的前端页面 / 静态资源前缀（白名单）
     # welcome.html / devices.html 为对外展示页面，仅消费 /api/public/* 静态数据，不接触集群
-    _PUBLIC_FILES = {"login.html", "welcome.html", "devices.html", "favicon.ico"}
+    _PUBLIC_FILES = {
+        "login.html", "welcome.html", "devices.html", "shared_experiment.html", "favicon.ico",
+    }
     _PUBLIC_PREFIXES = ("css/", "js/", "img/", "assets/", "fonts/")
 
     @app.route("/<path:filename>")

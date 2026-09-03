@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import json
+import secrets
 import sqlite3
 import threading
 import time
@@ -93,6 +94,27 @@ def init_db():
                 user_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
                 description TEXT,
+                created_at INTEGER NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS experiment_collaborators (
+                experiment_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                added_by INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (experiment_id, user_id)
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS experiment_shares (
+                experiment_id INTEGER PRIMARY KEY,
+                token TEXT UNIQUE NOT NULL,
+                created_by INTEGER NOT NULL,
                 created_at INTEGER NOT NULL
             )
             """
@@ -208,6 +230,14 @@ def init_db():
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_execution_tasks_owner "
             "ON execution_tasks(user_id, experiment_id, created_at DESC)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_experiment_collaborators_user "
+            "ON experiment_collaborators(user_id, experiment_id)"
+        )
+        cur.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_experiment_shares_token "
+            "ON experiment_shares(token)"
         )
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_task_events_task "
@@ -737,14 +767,29 @@ def get_paper_workspace_for_experiment(experiment_id, user_id=None, include_deta
     return _paper_workspace_dict(row, include_details=include_details) if row else None
 
 
-def list_paper_workspaces(user_id, limit=50):
+def list_paper_workspaces(user_id, limit=50, include_all=False):
     with cursor() as cur:
-        cur.execute(
-            "SELECT w.*, e.name AS experiment_name FROM paper_workspaces w "
-            "LEFT JOIN experiments e ON e.id=w.experiment_id WHERE w.user_id=? "
-            "ORDER BY w.created_at DESC LIMIT ?",
-            (user_id, min(100, max(1, int(limit or 50)))),
-        )
+        limit = min(100, max(1, int(limit or 50)))
+        if include_all:
+            cur.execute(
+                "SELECT w.*, e.name AS experiment_name, u.username AS owner_username, "
+                "'admin' AS access_role FROM paper_workspaces w "
+                "LEFT JOIN experiments e ON e.id=w.experiment_id "
+                "LEFT JOIN users u ON u.id=w.user_id "
+                "ORDER BY w.created_at DESC LIMIT ?",
+                (limit,),
+            )
+        else:
+            cur.execute(
+                "SELECT w.*, e.name AS experiment_name, u.username AS owner_username, "
+                "CASE WHEN w.user_id=? THEN 'owner' ELSE 'collaborator' END AS access_role "
+                "FROM paper_workspaces w LEFT JOIN experiments e ON e.id=w.experiment_id "
+                "LEFT JOIN users u ON u.id=w.user_id "
+                "LEFT JOIN experiment_collaborators c "
+                "ON c.experiment_id=w.experiment_id AND c.user_id=? "
+                "WHERE w.user_id=? OR c.user_id=? ORDER BY w.created_at DESC LIMIT ?",
+                (user_id, user_id, user_id, user_id, limit),
+            )
         rows = cur.fetchall()
     return [_paper_workspace_dict(row, include_details=False) for row in rows]
 
@@ -833,21 +878,138 @@ def get_experiment(exp_id: int) -> dict | None:
     return dict(r) if r else None
 
 
+def experiment_access_role(exp_id: int, user_id: int, is_admin: bool = False) -> str | None:
+    if is_admin:
+        return "admin" if get_experiment(exp_id) else None
+    with cursor() as cur:
+        cur.execute(
+            "SELECT CASE WHEN e.user_id=? THEN 'owner' "
+            "WHEN c.user_id IS NOT NULL THEN 'collaborator' END AS access_role "
+            "FROM experiments e LEFT JOIN experiment_collaborators c "
+            "ON c.experiment_id=e.id AND c.user_id=? WHERE e.id=?",
+            (user_id, user_id, exp_id),
+        )
+        row = cur.fetchone()
+    return row["access_role"] if row and row["access_role"] else None
+
+
 def list_experiments(user_id: int | None = None) -> list[dict]:
-    """user_id=None 返回所有（管理员视图），否则只返回该用户的。"""
+    """user_id=None 返回所有；否则返回用户拥有或参与的实验。"""
     with cursor() as cur:
         if user_id is None:
             cur.execute(
-                "SELECT e.*, u.username AS owner_username FROM experiments e "
+                "SELECT e.*, u.username AS owner_username, 'admin' AS access_role "
+                "FROM experiments e "
                 "LEFT JOIN users u ON u.id = e.user_id ORDER BY e.id DESC"
             )
         else:
             cur.execute(
-                "SELECT e.*, u.username AS owner_username FROM experiments e "
-                "LEFT JOIN users u ON u.id = e.user_id WHERE e.user_id=? ORDER BY e.id DESC",
-                (user_id,),
+                "SELECT e.*, u.username AS owner_username, "
+                "CASE WHEN e.user_id=? THEN 'owner' ELSE 'collaborator' END AS access_role "
+                "FROM experiments e LEFT JOIN users u ON u.id=e.user_id "
+                "LEFT JOIN experiment_collaborators c "
+                "ON c.experiment_id=e.id AND c.user_id=? "
+                "WHERE e.user_id=? OR c.user_id=? ORDER BY e.id DESC",
+                (user_id, user_id, user_id, user_id),
             )
         return [dict(r) for r in cur.fetchall()]
+
+
+def list_experiment_collaborators(exp_id: int) -> list[dict]:
+    with cursor() as cur:
+        cur.execute(
+            "SELECT u.id AS user_id, u.username, u.name, u.avatar_url, "
+            "c.added_by, c.created_at FROM experiment_collaborators c "
+            "JOIN users u ON u.id=c.user_id WHERE c.experiment_id=? "
+            "ORDER BY c.created_at, u.id",
+            (exp_id,),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def list_experiment_collaborator_user_ids(exp_id: int) -> list[int]:
+    with cursor() as cur:
+        cur.execute(
+            "SELECT user_id FROM experiment_collaborators WHERE experiment_id=?",
+            (exp_id,),
+        )
+        return [int(row["user_id"]) for row in cur.fetchall()]
+
+
+def find_user_by_username(username: str) -> dict | None:
+    with cursor() as cur:
+        cur.execute(
+            "SELECT id,username,name,avatar_url,role,created_at FROM users "
+            "WHERE username=?",
+            ((username or "").strip(),),
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def add_experiment_collaborator(exp_id: int, user_id: int, added_by: int) -> bool:
+    with cursor() as cur:
+        cur.execute(
+            "INSERT OR IGNORE INTO experiment_collaborators("
+            "experiment_id,user_id,added_by,created_at) VALUES(?,?,?,?)",
+            (exp_id, user_id, added_by, int(time.time())),
+        )
+        return cur.rowcount > 0
+
+
+def remove_experiment_collaborator(exp_id: int, user_id: int) -> bool:
+    with cursor() as cur:
+        cur.execute(
+            "DELETE FROM experiment_collaborators WHERE experiment_id=? AND user_id=?",
+            (exp_id, user_id),
+        )
+        return cur.rowcount > 0
+
+
+def get_experiment_share(exp_id: int) -> dict | None:
+    with cursor() as cur:
+        cur.execute("SELECT * FROM experiment_shares WHERE experiment_id=?", (exp_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def ensure_experiment_share(exp_id: int, created_by: int) -> dict:
+    existing = get_experiment_share(exp_id)
+    if existing:
+        return existing
+    for _ in range(3):
+        token = secrets.token_urlsafe(24)
+        try:
+            with cursor() as cur:
+                cur.execute(
+                    "INSERT INTO experiment_shares(experiment_id,token,created_by,created_at) "
+                    "VALUES(?,?,?,?)",
+                    (exp_id, token, created_by, int(time.time())),
+                )
+            return get_experiment_share(exp_id)
+        except sqlite3.IntegrityError:
+            existing = get_experiment_share(exp_id)
+            if existing:
+                return existing
+    raise RuntimeError("无法生成唯一分享链接")
+
+
+def revoke_experiment_share(exp_id: int) -> bool:
+    with cursor() as cur:
+        cur.execute("DELETE FROM experiment_shares WHERE experiment_id=?", (exp_id,))
+        return cur.rowcount > 0
+
+
+def get_experiment_by_share_token(token: str) -> dict | None:
+    with cursor() as cur:
+        cur.execute(
+            "SELECT e.*, u.username AS owner_username, s.created_at AS shared_at "
+            "FROM experiment_shares s JOIN experiments e ON e.id=s.experiment_id "
+            "LEFT JOIN users u ON u.id=e.user_id WHERE s.token=?",
+            ((token or "").strip(),),
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
 
 
 def delete_experiment(exp_id: int):
@@ -866,6 +1028,8 @@ def delete_experiment(exp_id: int):
             cur.execute(f"DELETE FROM paper_workspace_events WHERE workspace_id IN ({marks})", workspace_ids)
             cur.execute(f"DELETE FROM paper_workspace_files WHERE workspace_id IN ({marks})", workspace_ids)
             cur.execute(f"DELETE FROM paper_workspaces WHERE id IN ({marks})", workspace_ids)
+        cur.execute("DELETE FROM experiment_collaborators WHERE experiment_id=?", (exp_id,))
+        cur.execute("DELETE FROM experiment_shares WHERE experiment_id=?", (exp_id,))
         cur.execute("DELETE FROM chat_history WHERE experiment_id=?", (exp_id,))
         cur.execute("DELETE FROM experiments WHERE id=?", (exp_id,))
     return stored_paths

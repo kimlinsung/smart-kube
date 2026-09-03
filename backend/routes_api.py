@@ -156,7 +156,66 @@ def _summarize_experiment(exp: dict) -> dict:
         "edge_count": counts.get("edge", 0),
         "device_count": counts.get("device", 0),
         "total_count": len(pods),
+        "access_role": exp.get("access_role") or "owner",
     }
+
+
+_SECRET_FIELD_NAMES = {
+    "authorization", "cookie", "credential", "credentials", "password", "secret",
+    "token", "api_key", "apikey", "access_key", "secret_key", "private_key",
+}
+
+
+def _is_secret_field(key, hide_ssh=False, hide_agent_trace=False):
+    normalized = str(key).strip().lower().replace("-", "_")
+    if hide_agent_trace and normalized == "agent_trace":
+        return True
+    if hide_ssh and normalized.startswith("ssh_"):
+        return True
+    return (
+        normalized in _SECRET_FIELD_NAMES
+        or normalized.endswith("_password")
+        or normalized.endswith("_token")
+        or normalized.endswith("_secret")
+        or normalized in {"ssh_password", "ssh_command"}
+    )
+
+
+def _sanitize_value(value, *, hide_ssh=False, hide_agent_trace=False):
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_value(
+                item, hide_ssh=hide_ssh, hide_agent_trace=hide_agent_trace
+            )
+            for key, item in value.items()
+            if not _is_secret_field(key, hide_ssh, hide_agent_trace)
+        }
+    if isinstance(value, list):
+        return [
+            _sanitize_value(item, hide_ssh=hide_ssh, hide_agent_trace=hide_agent_trace)
+            for item in value
+        ]
+    return value
+
+
+def _sanitize_resource(resource, *, hide_ssh=False):
+    return _sanitize_value(resource or {}, hide_ssh=hide_ssh)
+
+
+def _sanitize_schedule(schedule, *, hide_ssh=False):
+    return _sanitize_value(schedule or {}, hide_ssh=hide_ssh)
+
+
+def _experiment_access(exp, user):
+    if not exp or not user:
+        return None
+    return db.experiment_access_role(
+        exp["id"], user["id"], is_admin=user.get("role") == "admin"
+    )
+
+
+def _share_url(token):
+    return f"{request.host_url.rstrip('/')}/shared_experiment.html?token={token}"
 
 
 @bp.post("/register")
@@ -444,19 +503,29 @@ def run_script(file_id):
 # 论文工作区
 # --------------------------------------------------------------------------------------
 
-def _paper_workspace_payload(workspace, include_resources=True):
+def _paper_workspace_payload(workspace, include_resources=True, access_role="owner"):
     if not workspace:
         return None
     payload = dict(workspace)
+    payload["access_role"] = access_role
+    if access_role == "collaborator":
+        payload = _sanitize_value(payload, hide_agent_trace=True)
+        payload["access_role"] = access_role
     tasks = db.list_execution_tasks(
         workspace["user_id"], experiment_id=workspace["experiment_id"], limit=30
     )
     payload["tasks"] = [
-        task for task in tasks if task.get("metadata", {}).get("workspace_id") == workspace["id"]
+        _sanitize_value(task, hide_agent_trace=True)
+        for task in tasks
+        if task.get("metadata", {}).get("workspace_id") == workspace["id"]
     ]
     if include_resources:
         try:
-            payload["resources"] = k8s_client.list_pods_by_experiment(workspace["experiment_id"])
+            resources = k8s_client.list_pods_by_experiment(workspace["experiment_id"])
+            payload["resources"] = (
+                [_sanitize_resource(item) for item in resources]
+                if access_role == "collaborator" else resources
+            )
             payload["resources_available"] = True
         except Exception:
             payload["resources"] = []
@@ -468,7 +537,16 @@ def _paper_workspace_payload(workspace, include_resources=True):
 @auth.login_required
 def paper_workspaces():
     u = request.current_user
-    return jsonify({"workspaces": db.list_paper_workspaces(u["id"], limit=50)})
+    workspaces = db.list_paper_workspaces(
+        u["id"], limit=50, include_all=u["role"] == "admin"
+    )
+    return jsonify({
+        "workspaces": [
+            _sanitize_value(item, hide_agent_trace=True)
+            if item.get("access_role") == "collaborator" else item
+            for item in workspaces
+        ]
+    })
 
 
 @bp.post("/paper/workspaces")
@@ -530,19 +608,36 @@ def create_paper_workspace():
 @auth.login_required
 def paper_workspace_detail(workspace_id):
     u = request.current_user
-    workspace = db.get_paper_workspace(workspace_id, user_id=u["id"])
+    workspace = db.get_paper_workspace(workspace_id)
     if not workspace:
         return jsonify({"error": "工作区不存在"}), 404
-    return jsonify({"workspace": _paper_workspace_payload(workspace)})
+    exp = db.get_experiment(workspace["experiment_id"])
+    access_role = _experiment_access(exp, u)
+    if not access_role:
+        return jsonify({"error": "无权查看此工作区"}), 403
+    return jsonify({
+        "workspace": _paper_workspace_payload(workspace, access_role=access_role)
+    })
+
+
+def _authorized_workspace_file(workspace_id, file_id, user):
+    workspace = db.get_paper_workspace(workspace_id, include_details=False)
+    if not workspace:
+        return None, None, None
+    exp = db.get_experiment(workspace["experiment_id"])
+    access_role = _experiment_access(exp, user)
+    item = db.get_paper_workspace_file(file_id)
+    if not access_role or not item or item["workspace_id"] != workspace_id:
+        return workspace, None, access_role
+    return workspace, item, access_role
 
 
 @bp.get("/paper/workspaces/<workspace_id>/files/<int:file_id>/content")
 @auth.login_required
 def paper_workspace_file_content(workspace_id, file_id):
     u = request.current_user
-    workspace = db.get_paper_workspace(workspace_id, user_id=u["id"], include_details=False)
-    item = db.get_paper_workspace_file(file_id, user_id=u["id"])
-    if not workspace or not item or item["workspace_id"] != workspace_id:
+    workspace, item, _ = _authorized_workspace_file(workspace_id, file_id, u)
+    if not workspace or not item:
         return jsonify({"error": "文件不存在"}), 404
     if not os.path.isfile(item["stored_path"]):
         return jsonify({"error": "文件已不在服务器"}), 410
@@ -559,9 +654,8 @@ def paper_workspace_file_content(workspace_id, file_id):
 @auth.login_required
 def paper_workspace_file_download(workspace_id, file_id):
     u = request.current_user
-    workspace = db.get_paper_workspace(workspace_id, user_id=u["id"], include_details=False)
-    item = db.get_paper_workspace_file(file_id, user_id=u["id"])
-    if not workspace or not item or item["workspace_id"] != workspace_id:
+    workspace, item, _ = _authorized_workspace_file(workspace_id, file_id, u)
+    if not workspace or not item:
         return jsonify({"error": "文件不存在"}), 404
     if not os.path.isfile(item["stored_path"]):
         return jsonify({"error": "文件已不在服务器"}), 410
@@ -572,8 +666,9 @@ def paper_workspace_file_download(workspace_id, file_id):
 @auth.login_required
 def paper_workspace_report(workspace_id):
     u = request.current_user
-    workspace = db.get_paper_workspace(workspace_id, user_id=u["id"], include_details=False)
-    if not workspace or not workspace.get("report_md"):
+    workspace = db.get_paper_workspace(workspace_id, include_details=False)
+    exp = db.get_experiment(workspace["experiment_id"]) if workspace else None
+    if not workspace or not _experiment_access(exp, u) or not workspace.get("report_md"):
         return jsonify({"error": "报告尚未生成"}), 404
     return Response(
         workspace["report_md"],
@@ -586,9 +681,11 @@ def paper_workspace_report(workspace_id):
 @auth.login_required
 def retry_paper_workspace_analysis(workspace_id):
     u = request.current_user
-    workspace = db.get_paper_workspace(workspace_id, user_id=u["id"])
+    workspace = db.get_paper_workspace(workspace_id)
     if not workspace:
         return jsonify({"error": "工作区不存在"}), 404
+    if workspace["user_id"] != u["id"]:
+        return jsonify({"error": "仅实验所有者可以重新分析"}), 403
     if workspace["mode"] != "full":
         return jsonify({"error": "仅完整流程支持分析重试"}), 400
     if workspace["status"] in {"queued", "running"}:
@@ -603,9 +700,11 @@ def retry_paper_workspace_analysis(workspace_id):
 @auth.login_required
 def reclaim_paper_workspace(workspace_id):
     u = request.current_user
-    workspace = db.get_paper_workspace(workspace_id, user_id=u["id"])
+    workspace = db.get_paper_workspace(workspace_id)
     if not workspace:
         return jsonify({"error": "工作区不存在"}), 404
+    if workspace["user_id"] != u["id"]:
+        return jsonify({"error": "仅实验所有者可以回收资源"}), 403
     if workspace["status"] in {"queued", "running"}:
         return jsonify({"error": "工作流仍在执行，暂不能回收"}), 409
     if workspace["resources_reclaimed"]:
@@ -719,17 +818,20 @@ def get_experiment_detail(exp_id):
     exp = db.get_experiment(exp_id)
     if not exp:
         return jsonify({"error": "实验不存在"}), 404
-    if u["role"] != "admin" and exp["user_id"] != u["id"]:
+    access_role = _experiment_access(exp, u)
+    if not access_role:
         return jsonify({"error": "无权查看他人实验"}), 403
     pods = k8s_client.list_pods_by_experiment(exp_id)
+    if access_role == "collaborator":
+        pods = [_sanitize_resource(item) for item in pods]
     counts = {"cloud": 0, "edge": 0, "device": 0}
     for p in pods:
         nt = p.get("node_type") or "edge"
         counts[nt] = counts.get(nt, 0) + 1
     paper_workspace = db.get_paper_workspace_for_experiment(
         exp_id,
-        user_id=None if u["role"] == "admin" else u["id"],
     )
+    collaborators = db.list_experiment_collaborators(exp_id)
     return jsonify({
         "experiment": {
             "id": exp["id"],
@@ -742,10 +844,14 @@ def get_experiment_detail(exp_id):
             "edge_count": counts.get("edge", 0),
             "device_count": counts.get("device", 0),
             "total_count": len(pods),
+            "collaborator_count": len(collaborators),
         },
         "pods": pods,
         "is_current": _current_experiment_id(u) == exp_id,
-        "paper_workspace": _paper_workspace_payload(paper_workspace, include_resources=False),
+        "access_role": access_role,
+        "paper_workspace": _paper_workspace_payload(
+            paper_workspace, include_resources=False, access_role=access_role
+        ),
     })
 
 
@@ -756,11 +862,229 @@ def enter_experiment(exp_id):
     exp = db.get_experiment(exp_id)
     if not exp:
         return jsonify({"error": "实验不存在"}), 404
-    if u["role"] != "admin" and exp["user_id"] != u["id"]:
+    access_role = _experiment_access(exp, u)
+    if access_role not in {"owner", "admin"}:
         return jsonify({"error": "无权进入他人实验"}), 403
     session["current_experiment_id"] = exp_id
     audit.log(u["id"], u["username"], "enter_experiment", str(exp_id))
     return jsonify({"ok": True, "current_experiment_id": exp_id, "name": exp["name"]})
+
+
+def _managed_experiment(exp_id, user):
+    exp = db.get_experiment(exp_id)
+    if not exp:
+        return None, None
+    access_role = _experiment_access(exp, user)
+    return exp, access_role if access_role in {"owner", "admin"} else None
+
+
+@bp.get("/experiments/<int:exp_id>/sharing")
+@auth.login_required
+def get_experiment_sharing(exp_id):
+    u = request.current_user
+    exp, manager_role = _managed_experiment(exp_id, u)
+    if not exp:
+        return jsonify({"error": "实验不存在"}), 404
+    if not manager_role:
+        return jsonify({"error": "仅实验所有者可以管理协作与分享"}), 403
+    share = db.get_experiment_share(exp_id)
+    return jsonify({
+        "collaborators": db.list_experiment_collaborators(exp_id),
+        "share": ({
+            "enabled": True,
+            "url": _share_url(share["token"]),
+            "created_at": share["created_at"],
+        } if share else {"enabled": False, "url": None}),
+    })
+
+
+@bp.post("/experiments/<int:exp_id>/collaborators")
+@auth.login_required
+def add_experiment_collaborator(exp_id):
+    u = request.current_user
+    exp, manager_role = _managed_experiment(exp_id, u)
+    if not exp:
+        return jsonify({"error": "实验不存在"}), 404
+    if not manager_role:
+        return jsonify({"error": "仅实验所有者可以添加协作者"}), 403
+    data = request.get_json(force=True) or {}
+    username = (data.get("username") or "").strip()[:100]
+    if not username:
+        return jsonify({"error": "请输入协作者用户名"}), 400
+    collaborator = db.find_user_by_username(username)
+    if not collaborator:
+        return jsonify({"error": "未找到该用户"}), 404
+    if collaborator["id"] == exp["user_id"]:
+        return jsonify({"error": "实验所有者无需重复添加"}), 400
+    added = db.add_experiment_collaborator(exp_id, collaborator["id"], u["id"])
+    audit.log(
+        u["id"], u["username"], "experiment_collaborator_add",
+        json.dumps({"experiment_id": exp_id, "collaborator": collaborator["username"]}),
+        source_ip=client_ip(),
+    )
+    return jsonify({
+        "added": added,
+        "collaborators": db.list_experiment_collaborators(exp_id),
+    })
+
+
+@bp.delete("/experiments/<int:exp_id>/collaborators/<int:user_id>")
+@auth.login_required
+def remove_experiment_collaborator(exp_id, user_id):
+    u = request.current_user
+    exp, manager_role = _managed_experiment(exp_id, u)
+    if not exp:
+        return jsonify({"error": "实验不存在"}), 404
+    if not manager_role:
+        return jsonify({"error": "仅实验所有者可以移除协作者"}), 403
+    removed = db.remove_experiment_collaborator(exp_id, user_id)
+    if removed:
+        audit.log(
+            u["id"], u["username"], "experiment_collaborator_remove",
+            json.dumps({"experiment_id": exp_id, "collaborator_user_id": user_id}),
+            source_ip=client_ip(),
+        )
+    return jsonify({
+        "removed": removed,
+        "collaborators": db.list_experiment_collaborators(exp_id),
+    })
+
+
+@bp.post("/experiments/<int:exp_id>/share")
+@auth.login_required
+def enable_experiment_share(exp_id):
+    u = request.current_user
+    exp, manager_role = _managed_experiment(exp_id, u)
+    if not exp:
+        return jsonify({"error": "实验不存在"}), 404
+    if not manager_role:
+        return jsonify({"error": "仅实验所有者可以创建分享链接"}), 403
+    share = db.ensure_experiment_share(exp_id, u["id"])
+    audit.log(
+        u["id"], u["username"], "experiment_share_enable",
+        json.dumps({"experiment_id": exp_id}), source_ip=client_ip(),
+    )
+    return jsonify({
+        "enabled": True,
+        "url": _share_url(share["token"]),
+        "created_at": share["created_at"],
+    })
+
+
+@bp.delete("/experiments/<int:exp_id>/share")
+@auth.login_required
+def disable_experiment_share(exp_id):
+    u = request.current_user
+    exp, manager_role = _managed_experiment(exp_id, u)
+    if not exp:
+        return jsonify({"error": "实验不存在"}), 404
+    if not manager_role:
+        return jsonify({"error": "仅实验所有者可以关闭分享链接"}), 403
+    revoked = db.revoke_experiment_share(exp_id)
+    if revoked:
+        audit.log(
+            u["id"], u["username"], "experiment_share_disable",
+            json.dumps({"experiment_id": exp_id}), source_ip=client_ip(),
+        )
+    return jsonify({"enabled": False, "revoked": revoked})
+
+
+def _public_workspace_payload(workspace):
+    if not workspace:
+        return None
+    configuration = _sanitize_value(
+        workspace.get("config_json") or {}, hide_ssh=True, hide_agent_trace=True
+    )
+    analysis = _sanitize_value(
+        workspace.get("analysis_json") or {}, hide_ssh=True, hide_agent_trace=True
+    )
+    return {
+        "id": workspace["id"],
+        "experiment_id": workspace["experiment_id"],
+        "name": workspace["name"],
+        "goal": workspace["goal"],
+        "mode": workspace["mode"],
+        "status": workspace["status"],
+        "stage": workspace["stage"],
+        "config_json": configuration,
+        "schedule_json": _sanitize_schedule(workspace.get("schedule_json"), hide_ssh=True),
+        "analysis_json": analysis,
+        "report_md": workspace.get("report_md") or "",
+        "resources_reclaimed": workspace.get("resources_reclaimed", False),
+        "created_at": workspace["created_at"],
+        "updated_at": workspace["updated_at"],
+        "finished_at": workspace.get("finished_at"),
+        "files": [
+            {
+                "id": item["id"], "original_name": item["original_name"],
+                "size": item["size"], "content_type": item["content_type"],
+                "artifact_type": item["artifact_type"], "created_at": item["created_at"],
+            }
+            for item in workspace.get("files", [])
+        ],
+        "events": [
+            {
+                "id": item["id"], "phase": item["phase"],
+                "event_type": item["event_type"], "content": item["content"],
+                "created_at": item["created_at"],
+            }
+            for item in workspace.get("events", [])
+        ],
+    }
+
+
+@bp.get("/public/experiments/shared/<token>")
+def public_shared_experiment(token):
+    exp = db.get_experiment_by_share_token(token)
+    if not exp:
+        return jsonify({"error": "分享链接无效或已关闭"}), 404
+    workspace = db.get_paper_workspace_for_experiment(exp["id"])
+    public_workspace = _public_workspace_payload(workspace)
+    placements = ((public_workspace or {}).get("schedule_json") or {}).get("placements", [])
+    counts = {
+        tier: sum(item.get("node_type") == tier for item in placements)
+        for tier in ("cloud", "edge", "device")
+    }
+    audit.log(
+        None, "unknown", "experiment_share_view",
+        json.dumps({"experiment_id": exp["id"]}), source_ip=client_ip(),
+    )
+    return jsonify({
+        "experiment": {
+            "id": exp["id"], "name": exp["name"],
+            "description": exp.get("description") or "",
+            "owner_username": exp.get("owner_username") or "",
+            "created_at": exp["created_at"], "shared_at": exp["shared_at"],
+            "cloud_count": counts["cloud"], "edge_count": counts["edge"],
+            "device_count": counts["device"], "total_count": len(placements),
+        },
+        "paper_workspace": public_workspace,
+        "read_only": True,
+    })
+
+
+@bp.get("/public/experiments/shared/<token>/files/<int:file_id>/download")
+def public_shared_file_download(token, file_id):
+    exp = db.get_experiment_by_share_token(token)
+    workspace = db.get_paper_workspace_for_experiment(
+        exp["id"], include_details=False
+    ) if exp else None
+    item = db.get_paper_workspace_file(file_id)
+    if (
+        not exp or not workspace or not item
+        or item["workspace_id"] != workspace["id"]
+    ):
+        return jsonify({"error": "分享文件不存在"}), 404
+    if not os.path.isfile(item["stored_path"]):
+        return jsonify({"error": "文件已不在服务器"}), 410
+    audit.log(
+        None, "unknown", "experiment_share_download",
+        json.dumps({"experiment_id": exp["id"], "file_id": file_id}),
+        source_ip=client_ip(),
+    )
+    return send_file(
+        item["stored_path"], as_attachment=True, download_name=item["original_name"]
+    )
 
 
 @bp.delete("/experiments/<int:exp_id>")

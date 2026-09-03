@@ -31,6 +31,40 @@
         </div>
       </div>
 
+      <section class="experiment-sharing" id="sharing">
+        <div class="experiment-sharing-head">
+          <div>
+            <span class="eyebrow">COLLABORATION</span>
+            <h2>协作与分享</h2>
+          </div>
+          <span class="sharing-access" id="sharingAccess"></span>
+        </div>
+        <div id="sharingManager" hidden>
+          <div class="collaborator-block">
+            <form class="collaborator-form" id="collaboratorForm">
+              <label for="collaboratorUsername">协作者</label>
+              <input id="collaboratorUsername" name="username" maxlength="100" autocomplete="off" placeholder="输入平台用户名" />
+              <button class="primary" type="submit">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3 2.4-5 6-5M17 8v8M13 12h8"/></svg>
+                添加
+              </button>
+            </form>
+            <div class="collaborator-list" id="collaboratorList"></div>
+          </div>
+          <div class="share-link-block">
+            <div class="share-link-copy"><b>只读分享链接</b><small id="shareState">尚未开启</small></div>
+            <div class="share-link-controls">
+              <input id="shareUrl" readonly placeholder="开启后生成链接" />
+              <button id="copyShare" type="button" hidden title="复制链接" aria-label="复制链接">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>
+              </button>
+              <button class="primary" id="toggleShare" type="button">开启分享</button>
+            </div>
+          </div>
+        </div>
+        <div class="sharing-readonly" id="sharingReadonly" hidden>你以协作者身份查看此项目，项目内容为只读。</div>
+      </section>
+
       <section class="experiment-artifacts" id="paperArtifacts" hidden>
         <div class="experiment-artifacts-head">
           <div><span class="eyebrow">PAPER WORKSPACE</span><h2>实验产物与过程</h2></div>
@@ -76,6 +110,8 @@
 const EXP_ID = Number(new URLSearchParams(location.search).get('id'));
 let CURRENT_POD_FOR_UPLOAD = null;
 let DETAIL = null;
+let SHARING = null;
+let DETAIL_RELOAD_TIMER = null;
 
 function renderHead() {
     const exp = DETAIL.experiment;
@@ -92,20 +128,84 @@ function renderHead() {
         ['端', exp.device_count, 'badge-device'],
     ].map(([l, n, c]) => `<span class="badge ${c}">${l} ${n}</span>`).join('');
     const enterBtn = document.getElementById('btnEnter');
-    if (DETAIL.is_current) { enterBtn.textContent = '已是当前实验'; enterBtn.disabled = true; }
-    else { enterBtn.textContent = '进入此实验'; enterBtn.disabled = false; }
+    if (DETAIL.access_role === 'collaborator') {
+        enterBtn.hidden = true;
+    } else {
+        enterBtn.hidden = false;
+        if (DETAIL.is_current) { enterBtn.textContent = '已是当前实验'; enterBtn.disabled = true; }
+        else { enterBtn.textContent = '进入此实验'; enterBtn.disabled = false; }
+    }
+    const canManageSharing = ['owner', 'admin'].includes(DETAIL.access_role);
+    document.getElementById('sharingManager').hidden = !canManageSharing;
+    document.getElementById('sharingReadonly').hidden = canManageSharing;
+    document.getElementById('sharingAccess').textContent = canManageSharing
+        ? `${exp.collaborator_count || 0} 位协作者` : '只读协作';
+}
+
+function renderSharing() {
+    if (!SHARING) return;
+    const collaborators = SHARING.collaborators || [];
+    document.getElementById('collaboratorList').innerHTML = collaborators.length
+        ? collaborators.map(item => `
+          <div class="collaborator-item">
+            <span class="collaborator-avatar">${escapeHtml((item.name || item.username || '?').slice(0, 1).toUpperCase())}</span>
+            <span><b>${escapeHtml(item.name || item.username)}</b><small>@${escapeHtml(item.username)}</small></span>
+            <button type="button" data-remove-collaborator="${item.user_id}" title="移除协作者" aria-label="移除 ${escapeHtml(item.username)}">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>
+            </button>
+          </div>`).join('')
+        : '<div class="collaborator-empty">暂无协作者</div>';
+    const share = SHARING.share || { enabled: false };
+    document.getElementById('shareState').textContent = share.enabled ? '链接已开启' : '尚未开启';
+    document.getElementById('shareUrl').value = share.url || '';
+    document.getElementById('copyShare').hidden = !share.enabled;
+    const toggle = document.getElementById('toggleShare');
+    toggle.textContent = share.enabled ? '关闭分享' : '开启分享';
+    toggle.classList.toggle('danger', share.enabled);
+    document.getElementById('sharingAccess').textContent = `${collaborators.length} 位协作者`;
+}
+
+async function loadSharing() {
+    if (!DETAIL || !['owner', 'admin'].includes(DETAIL.access_role)) return;
+    try {
+        SHARING = await API.experimentSharing(EXP_ID);
+        renderSharing();
+    } catch (error) {
+        document.getElementById('collaboratorList').innerHTML = `<div class="collaborator-empty">${escapeHtml(error.message)}</div>`;
+    }
+}
+
+function copyShareLink() {
+    const input = document.getElementById('shareUrl');
+    if (!input.value) return;
+    const done = () => {
+        const button = document.getElementById('copyShare');
+        button.classList.add('copied');
+        setTimeout(() => button.classList.remove('copied'), 1200);
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(input.value).then(done).catch(() => {});
+        return;
+    }
+    input.select();
+    document.execCommand('copy');
+    input.setSelectionRange(0, 0);
+    done();
 }
 
 function renderPodRow(p) {
+    const isCollaborator = DETAIL.access_role === 'collaborator';
     const sshInfo = p.ssh_port
-        ? `port:<b>${p.ssh_port}</b> user:${p.ssh_user || 'root'} pwd:<code>${escapeHtml(p.ssh_password || '')}</code>`
+        ? (isCollaborator
+            ? `port:<b>${p.ssh_port}</b> <span style="color:var(--muted-2)">凭证仅所有者可见</span>`
+            : `port:<b>${p.ssh_port}</b> user:${p.ssh_user || 'root'} pwd:<code>${escapeHtml(p.ssh_password || '')}</code>`)
         : '<span style="color:var(--muted-2)">-</span>';
     const canOp = ME && (ME.role === 'admin' || String(p.owner_id) === String(ME.id));
     const ops = canOp
         ? `<button class="primary" data-act="shell" data-name="${escapeHtml(p.name)}">Web Shell</button>
            <button data-act="upload" data-name="${escapeHtml(p.name)}">上传</button>
            <button class="danger" data-act="del" data-name="${escapeHtml(p.name)}">删除</button>`
-        : `<span style="color:var(--muted-2);font-size:12px;">他人 Pod</span>`;
+        : `<span style="color:var(--muted-2);font-size:12px;">只读</span>`;
     return `
         <td><code>${escapeHtml(p.name)}</code></td>
         <td>${badgePhase(p.phase, p.name)}</td>
@@ -198,6 +298,61 @@ document.getElementById('hiddenUpload').onchange = async e => {
     e.target.value = '';
 };
 
+document.getElementById('collaboratorForm').onsubmit = async event => {
+    event.preventDefault();
+    const input = document.getElementById('collaboratorUsername');
+    const username = input.value.trim();
+    if (!username) return;
+    const button = event.submitter;
+    button.disabled = true;
+    try {
+        const response = await API.addExperimentCollaborator(EXP_ID, username);
+        SHARING.collaborators = response.collaborators || [];
+        input.value = '';
+        renderSharing();
+        await loadDetail(true);
+    } catch (error) {
+        alert('添加失败：' + error.message);
+    } finally {
+        button.disabled = false;
+    }
+};
+
+document.getElementById('collaboratorList').onclick = async event => {
+    const button = event.target.closest('[data-remove-collaborator]');
+    if (!button || !confirm('确认移除此协作者？')) return;
+    button.disabled = true;
+    try {
+        const response = await API.removeExperimentCollaborator(EXP_ID, button.dataset.removeCollaborator);
+        SHARING.collaborators = response.collaborators || [];
+        renderSharing();
+        await loadDetail(true);
+    } catch (error) {
+        alert('移除失败：' + error.message);
+    } finally {
+        button.disabled = false;
+    }
+};
+
+document.getElementById('toggleShare').onclick = async event => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+        if (SHARING?.share?.enabled) {
+            if (!confirm('关闭后，现有分享链接将立即失效。确认关闭？')) return;
+            await API.disableExperimentShare(EXP_ID);
+        } else {
+            await API.enableExperimentShare(EXP_ID);
+        }
+        await loadSharing();
+    } catch (error) {
+        alert('分享设置失败：' + error.message);
+    } finally {
+        button.disabled = false;
+    }
+};
+document.getElementById('copyShare').onclick = copyShareLink;
+
 document.getElementById('btnRefresh').onclick = () => loadDetail();
 document.getElementById('btnEnter').onclick = async () => {
     try {
@@ -208,6 +363,11 @@ document.getElementById('btnEnter').onclick = async () => {
 };
 
 window.addEventListener('chat:done', () => loadDetail(true));
+window.addEventListener('task:update', event => {
+    if (Number(event.detail?.experiment_id) !== EXP_ID) return;
+    clearTimeout(DETAIL_RELOAD_TIMER);
+    DETAIL_RELOAD_TIMER = setTimeout(() => loadDetail(true), 120);
+});
 
 (async () => {
     if (!EXP_ID) {
@@ -220,7 +380,8 @@ window.addEventListener('chat:done', () => loadDetail(true));
     ME = await loadMe();
     if (!ME) return;
     await loadDetail();
-    startPolling(() => loadDetail(true), 15000);
+    await loadSharing();
+    if (location.hash === '#sharing') document.getElementById('sharing').scrollIntoView();
 })();
 </script>
 </body>

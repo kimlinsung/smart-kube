@@ -216,6 +216,39 @@ body[data-page="paper_workspace"] > .assistant-fab { display: none; }
 .experiment-report summary { cursor: pointer; color: var(--primary); font-size: 11px; font-weight: 650; }
 .experiment-report .report-view { max-height: 480px; margin-top: 12px; padding: 14px; overflow: auto; background: var(--surface-2); }
 
+.experiment-sharing { margin-bottom: 18px; padding: 18px 20px; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+.experiment-sharing-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.experiment-sharing-head h2 { margin: 1px 0 0; font-size: 14px; }
+.sharing-access { padding: 3px 8px; border: 1px solid var(--primary-100); border-radius: 999px; color: var(--primary-700); background: var(--primary-050); font-size: 10.5px; font-weight: 650; }
+#sharingManager { margin-top: 15px; display: grid; grid-template-columns: minmax(280px, .9fr) minmax(360px, 1.1fr); gap: 22px; padding-top: 15px; border-top: 1px solid var(--border); }
+#sharingManager[hidden] { display: none; }
+.collaborator-form { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.collaborator-form label { color: var(--text-2); font-size: 11px; font-weight: 700; }
+.collaborator-form input, .share-link-controls input { width: 100%; min-width: 0; height: 34px; padding: 6px 9px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: #fff; font: inherit; font-size: 11px; }
+.collaborator-form button { min-height: 34px; display: inline-flex; align-items: center; gap: 5px; }
+.collaborator-form button svg { width: 14px; height: 14px; }
+.collaborator-list { min-height: 38px; margin-top: 9px; display: flex; flex-wrap: wrap; gap: 6px; }
+.collaborator-item { min-width: 0; padding: 5px 6px; display: grid; grid-template-columns: 27px minmax(0, 1fr) 25px; gap: 7px; align-items: center; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-2); }
+.collaborator-avatar { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 6px; color: var(--primary-700); background: var(--primary-050); font-size: 10px; font-weight: 700; }
+.collaborator-item > span:nth-child(2) { min-width: 0; }
+.collaborator-item b, .collaborator-item small { display: block; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.collaborator-item b { font-size: 10.5px; }
+.collaborator-item small { color: var(--muted); font-size: 9px; }
+.collaborator-item button { width: 25px; height: 25px; padding: 5px; border: 0; color: var(--muted); background: transparent; }
+.collaborator-item button:hover { color: var(--danger); background: var(--danger-bg); }
+.collaborator-item button svg { width: 13px; height: 13px; }
+.collaborator-empty { padding: 8px 2px; color: var(--muted); font-size: 10.5px; }
+.share-link-copy { margin-bottom: 7px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.share-link-copy b { font-size: 11px; }
+.share-link-copy small { color: var(--muted); font-size: 10px; }
+.share-link-controls { display: grid; grid-template-columns: minmax(0, 1fr) 34px auto; gap: 7px; }
+.share-link-controls input { color: var(--muted); font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; }
+.share-link-controls button { height: 34px; white-space: nowrap; }
+.share-link-controls #copyShare { width: 34px; padding: 8px; }
+.share-link-controls #copyShare svg { width: 15px; height: 15px; }
+.share-link-controls #copyShare.copied { color: var(--primary); border-color: var(--primary-100); background: var(--primary-050); }
+.sharing-readonly { margin-top: 14px; padding: 10px 12px; border-left: 3px solid #b36b18; color: var(--text-2); background: #fdf7ee; font-size: 11px; }
+
 @media (max-width: 1180px) {
     .workspace-grid { grid-template-columns: 1fr; }
     .workspace-column { border-right: 0; }
@@ -233,6 +266,7 @@ body[data-page="paper_workspace"] > .assistant-fab { display: none; }
     .workspace-actions { width: 100%; flex-wrap: wrap; }
     .run-strip { padding: 8px 16px; }
     .workflow-band, .workspace-section { padding-left: 16px; padding-right: 16px; }
+    #sharingManager { grid-template-columns: 1fr; }
 }
 @media (max-width: 640px) {
     .workspace-head { gap: 12px; }
@@ -253,4 +287,10 @@ body[data-page="paper_workspace"] > .assistant-fab { display: none; }
     .experiment-artifact-summary span:nth-child(3) { border-left: 0; border-top: 1px solid var(--border); }
     .experiment-artifact-summary span:nth-child(4) { border-top: 1px solid var(--border); }
     .experiment-artifact-grid { grid-template-columns: 1fr; }
+    .experiment-sharing { padding: 15px 14px; }
+    .experiment-sharing-head { align-items: flex-start; }
+    .collaborator-form { grid-template-columns: 1fr auto; }
+    .collaborator-form label { grid-column: 1 / -1; }
+    .share-link-controls { grid-template-columns: minmax(0, 1fr) 34px; }
+    .share-link-controls #toggleShare { grid-column: 1 / -1; }
 }

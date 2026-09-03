@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>共享实验 · 智能云边端</title>
+<link rel="stylesheet" href="/css/shared_experiment.css" />
+</head>
+<body>
+<header class="share-topbar">
+  <a class="share-brand" href="/welcome.html" aria-label="智能云边端首页">
+    <span class="share-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="5.5" r="2.25"/><circle cx="5.5" cy="17.5" r="2.25"/><circle cx="18.5" cy="17.5" r="2.25"/><path d="M10.9 7.5 6.6 15.5M13.1 7.5l4.3 8M7.8 17.5h8.4"/><path d="M12 11.2l2.1 1.2v2.4L12 16l-2.1-1.2v-2.4L12 11.2z"/></svg>
+    </span>
+    <span><b>智能云边端</b><small>CLOUD · EDGE · DEVICE</small></span>
+  </a>
+  <div class="share-top-actions"><span class="readonly-pill">只读分享</span><a href="/login.html">登录控制台</a></div>
+</header>
+
+<main>
+  <section class="load-state" id="loadingState"><span class="spinner"></span><p>正在读取共享实验</p></section>
+  <section class="load-state error-state" id="errorState" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 17h.01"/></svg>
+    <h1>无法打开此实验</h1><p id="errorMessage">分享链接无效或已关闭</p>
+  </section>
+
+  <div id="projectView" hidden>
+    <section class="project-head">
+      <div class="project-title">
+        <div class="project-kicker"><span id="projectStatus">加载中</span><span id="projectMode"></span></div>
+        <h1 id="projectName"></h1>
+        <p id="projectGoal"></p>
+        <div class="project-meta"><span id="projectOwner"></span><span id="projectCreated"></span><span id="projectUpdated"></span></div>
+      </div>
+      <div class="project-seal" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M9 3h6M10 3v6.5L5.2 18a2 2 0 0 0 1.8 3h10a2 2 0 0 0 1.8-3L14 9.5V3"/><path d="M8 14h8"/></svg>
+      </div>
+    </section>
+
+    <section class="metric-band" id="metricBand"></section>
+
+    <section class="workflow-band">
+      <div class="section-head"><div><small>PROCESS</small><h2>实验流程</h2></div><span id="resourceState"></span></div>
+      <div class="workflow" id="workflow"></div>
+    </section>
+
+    <section class="overview-grid">
+      <div class="chart-panel"><div class="section-head"><div><small>OBSERVABILITY</small><h2>阶段耗时</h2></div></div><div class="chart" id="durationChart"></div></div>
+      <div class="chart-panel"><div class="section-head"><div><small>PLACEMENT</small><h2>资源分布</h2></div></div><div class="chart" id="resourceChart"></div></div>
+    </section>
+
+    <section class="files-band">
+      <div class="section-head"><div><small>ARTIFACTS</small><h2>项目文件</h2></div><span id="fileCount"></span></div>
+      <div class="file-list" id="fileList"></div>
+    </section>
+
+    <section class="evidence-grid">
+      <div class="events-panel">
+        <div class="section-head"><div><small>ACTIVITY</small><h2>过程记录</h2></div><span id="eventCount"></span></div>
+        <ol class="event-list" id="eventList"></ol>
+      </div>
+      <div class="artifact-panel">
+        <div class="artifact-tabs" role="tablist">
+          <button class="active" type="button" data-tab="code">代码</button>
+          <button type="button" data-tab="run">运行</button>
+          <button type="button" data-tab="analysis">分析</button>
+          <button type="button" data-tab="report">报告</button>
+          <button type="button" data-tab="config">配置</button>
+        </div>
+        <div class="artifact-body" id="artifactBody"></div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script src="/vendor/echarts.min.js"></script>
+<script src="/vendor/marked.min.js"></script>
+<script src="/vendor/purify.min.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/shared_experiment.js"></script>
+</body>
+</html>

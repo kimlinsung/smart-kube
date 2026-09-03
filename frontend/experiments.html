@@ -38,6 +38,8 @@ function fmtCount(label, n, cls) { return `<span class="badge ${cls}">${label} $
 function renderCard(exp) {
     const isCurrent = exp.id === CURRENT_EXP_ID;
     const isMine = ME && exp.user_id === ME.id;
+    const isCollaborator = exp.access_role === 'collaborator';
+    const canManage = !isCollaborator && (isMine || (ME && ME.role === 'admin'));
     const showOwner = ME && (ME.role === 'admin' || !isMine);
     const ownerLine = showOwner ? `<div>用户：<b>${escapeHtml(exp.owner_username || '-')}</b></div>` : '';
     const initial = (exp.name || '?').trim().slice(0, 1).toUpperCase();
@@ -47,7 +49,7 @@ function renderCard(exp) {
               <span class="exp-avatar">${escapeHtml(initial)}</span>
               <div style="min-width:0;flex:1;">
                   <div class="name clickable" data-act="view" data-id="${exp.id}" title="查看实验详情">
-                      ${escapeHtml(exp.name)}${isCurrent ? '<span class="current-tag">当前</span>' : ''}
+                      ${escapeHtml(exp.name)}${isCurrent ? '<span class="current-tag">当前</span>' : ''}${isCollaborator ? '<span class="collaborator-tag">协作</span>' : ''}
                   </div>
                   <div class="meta">
                       ${ownerLine}
@@ -63,8 +65,8 @@ function renderCard(exp) {
           </div>
           <div class="actions">
               <button class="view" data-act="view" data-id="${exp.id}">查看</button>
-              <button class="primary" data-act="enter" data-id="${exp.id}">${isCurrent ? '已进入' : '进入'}</button>
-              <button class="danger" data-act="del" data-id="${exp.id}" data-name="${escapeHtml(exp.name)}">删除</button>
+              ${canManage ? `<button class="primary" data-act="enter" data-id="${exp.id}">${isCurrent ? '已进入' : '进入'}</button>` : ''}
+              ${canManage ? `<button class="danger" data-act="del" data-id="${exp.id}" data-name="${escapeHtml(exp.name)}">删除</button>` : ''}
           </div>
       </div>`;
 }
@@ -90,11 +92,11 @@ function render() {
             <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6M10 3v6.5L5.2 18a2 2 0 0 0 1.8 3h10a2 2 0 0 0 1.8-3L14 9.5V3"/></svg>
             <div class="t">暂无实验</div><div class="s">点击右上角「+ 新建实验」开启你的第一个实验环境。</div>
         </div></div>`;
-        hint.textContent = ME && ME.role === 'admin' ? '管理员视图：所有用户的实验' : '我的实验';
+        hint.textContent = ME && ME.role === 'admin' ? '管理员视图：所有用户的实验' : '我的与协作实验';
         document.getElementById('expPagination').style.display = 'none';
         return;
     }
-    hint.textContent = (ME && ME.role === 'admin' ? '管理员视图：所有用户的实验' : '我的实验') + `（共 ${ALL_EXPS.length} 个）`;
+    hint.textContent = (ME && ME.role === 'admin' ? '管理员视图：所有用户的实验' : '我的与协作实验') + `（共 ${ALL_EXPS.length} 个）`;
     const totalPages = Math.max(1, Math.ceil(ALL_EXPS.length / PAGE_SIZE));
     if (PAGE > totalPages) PAGE = totalPages;
     const start = (PAGE - 1) * PAGE_SIZE;

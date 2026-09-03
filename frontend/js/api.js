@@ -134,4 +134,16 @@ const API = {
     createExperiment(name, description) { return this.post('/api/experiments', { name, description }); },
     enterExperiment(id) { return this.post(`/api/experiments/${id}/enter`); },
     deleteExperiment(id) { return this.del('/api/experiments/' + id); },
+    experimentSharing(id) { return this.get(`/api/experiments/${id}/sharing`); },
+    addExperimentCollaborator(id, username) {
+        return this.post(`/api/experiments/${id}/collaborators`, { username });
+    },
+    removeExperimentCollaborator(id, userId) {
+        return this.del(`/api/experiments/${id}/collaborators/${userId}`);
+    },
+    enableExperimentShare(id) { return this.post(`/api/experiments/${id}/share`); },
+    disableExperimentShare(id) { return this.del(`/api/experiments/${id}/share`); },
+    sharedExperiment(token) {
+        return this.get(`/api/public/experiments/shared/${encodeURIComponent(token)}`);
+    },
 };

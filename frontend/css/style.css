@@ -60,6 +60,7 @@
 /* ---------- Reset / Base ---------- */
 * { box-sizing: border-box; }
 html, body { height: 100%; }
+[hidden] { display: none !important; }
 body {
     margin: 0; padding: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Inter", "PingFang SC",
@@ -496,6 +497,7 @@ input::placeholder, textarea::placeholder { color: var(--muted-2); }
 .exp-card .actions button { flex: 1; padding: 7px 0; font-size: 12.5px; }
 .exp-card.current .actions button.primary { background: var(--primary); border-color: var(--primary); }
 .current-tag { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; padding: 1px 9px; background: var(--success-bg); color: #0b7a53; font-size: 10.5px; font-weight: 700; border-radius: var(--radius-pill); border: 1px solid var(--success-bd); vertical-align: 2px; }
+.collaborator-tag { display: inline-flex; margin-left: 8px; padding: 1px 7px; border: 1px solid #f1d7b7; border-radius: var(--radius-pill); color: #9a5b13; background: #fdf3e7; font-size: 10.5px; font-weight: 700; vertical-align: 2px; }
 .exp-pagination { display: flex; justify-content: center; align-items: center; gap: 12px; margin-top: 22px; font-size: 13px; color: var(--text-2); }
 .exp-pagination button { padding: 6px 14px; }
 .exp-empty { grid-column: 1 / -1; }
