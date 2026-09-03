@@ -139,6 +139,20 @@ body[data-page="paper_workspace"] > .assistant-fab { display: none; }
 .report-view pre { overflow: auto; }
 .report-download { margin: 0 14px 16px; padding: 8px 10px; display: block; text-align: center; border: 1px solid var(--border); border-radius: 6px; background: #fff; font-size: 11px; }
 .report-download[hidden] { display: none; }
+.program-meta { margin-bottom: 9px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.program-meta b, .program-meta span { padding: 3px 6px; border-radius: 4px; font-size: 9.5px; }
+.program-meta b { color: var(--primary); background: var(--primary-050); }
+.program-meta span { color: var(--muted); background: var(--surface-3); }
+.code-view { margin: 0; padding: 13px; overflow: auto; white-space: pre; border: 1px solid #294238; border-radius: 6px; color: #deebe3; background: #15231d; font-size: 10.5px; line-height: 1.6; }
+.execution-result { margin-bottom: 10px; padding: 11px; border: 1px solid var(--border); border-left: 3px solid var(--success); border-radius: 6px; background: #fff; }
+.execution-result.failed, .execution-result.timed_out, .execution-result.invalid_output { border-left-color: var(--danger); }
+.execution-result header { display: flex; justify-content: space-between; gap: 8px; }
+.execution-result header b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.execution-result header span, .execution-result > small { color: var(--muted); font-size: 9.5px; }
+.execution-result > small { display: block; margin: 3px 0 9px; overflow-wrap: anywhere; }
+.execution-result label { display: block; margin: 7px 0 3px; color: var(--muted); font-size: 9px; font-weight: 700; }
+.execution-result pre { max-height: 180px; margin: 0; padding: 8px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 4px; color: #dce9e1; background: #15231d; font-size: 9.5px; line-height: 1.55; }
+.execution-result pre.stderr { color: #fecaca; }
 
 .launch-backdrop, .file-preview-backdrop {
     position: fixed; inset: 0; z-index: 500; padding: 24px; display: flex; align-items: center; justify-content: center;
@@ -225,7 +239,7 @@ body[data-page="paper_workspace"] > .assistant-fab { display: none; }
     .workspace-actions button, .workspace-actions .button-link { flex: 1; justify-content: center; }
     .run-strip { height: auto; grid-template-columns: 1fr auto; }
     .run-strip time { grid-column: 1 / -1; justify-self: start; }
-    #workflowGraph { height: 230px; }
+    #workflowGraph { height: 330px; }
     .metric-row { grid-template-columns: 1fr 1fr; }
     .chart-grid { grid-template-columns: 1fr; }
     .workspace-events li { grid-template-columns: 17px 58px minmax(0, 1fr); }

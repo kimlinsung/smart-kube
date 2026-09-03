@@ -176,10 +176,18 @@ def init_db():
                 stored_path TEXT NOT NULL,
                 size INTEGER NOT NULL DEFAULT 0,
                 content_type TEXT,
+                artifact_type TEXT NOT NULL DEFAULT 'input',
                 created_at INTEGER NOT NULL
             )
             """
         )
+        cur.execute("PRAGMA table_info(paper_workspace_files)")
+        paper_file_cols = {r["name"] for r in cur.fetchall()}
+        if "artifact_type" not in paper_file_cols:
+            cur.execute(
+                "ALTER TABLE paper_workspace_files "
+                "ADD COLUMN artifact_type TEXT NOT NULL DEFAULT 'input'"
+            )
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS paper_workspace_events (
@@ -637,14 +645,19 @@ def update_paper_workspace(workspace_id, **changes):
     return get_paper_workspace(workspace_id)
 
 
-def add_paper_workspace_file(workspace_id, user_id, original_name, stored_path, size, content_type=""):
+def add_paper_workspace_file(
+    workspace_id, user_id, original_name, stored_path, size, content_type="", artifact_type="input"
+):
     now = int(time.time())
     with cursor() as cur:
         cur.execute(
             "INSERT INTO paper_workspace_files("
-            "workspace_id,user_id,original_name,stored_path,size,content_type,created_at"
-            ") VALUES(?,?,?,?,?,?,?)",
-            (workspace_id, user_id, original_name, stored_path, int(size or 0), content_type or "", now),
+            "workspace_id,user_id,original_name,stored_path,size,content_type,artifact_type,created_at"
+            ") VALUES(?,?,?,?,?,?,?,?)",
+            (
+                workspace_id, user_id, original_name, stored_path, int(size or 0),
+                content_type or "", artifact_type or "input", now,
+            ),
         )
         file_id = cur.lastrowid
         cur.execute("SELECT * FROM paper_workspace_files WHERE id=?", (file_id,))
@@ -673,7 +686,7 @@ def _paper_workspace_dict(row, include_details=False):
     if include_details:
         with cursor() as cur:
             cur.execute(
-                "SELECT id,workspace_id,original_name,size,content_type,created_at "
+                "SELECT id,workspace_id,original_name,size,content_type,artifact_type,created_at "
                 "FROM paper_workspace_files WHERE workspace_id=? ORDER BY id",
                 (item["id"],),
             )

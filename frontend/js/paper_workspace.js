@@ -5,14 +5,19 @@
         interrupted: '已中断', reclaimed: '已回收',
     };
     const PHASE_LABELS = {
-        intake: '文档理解 Agent', config: '配置 Agent', schedule: '调度', analysis: '分析 Agent', report: '报告 Agent',
+        intake: '文档理解 Agent', config: '配置 Agent', code: '代码生成 Agent', schedule: '调度',
+        execute: '真实执行', analysis: '分析 Agent', report: '报告 Agent',
         completed: '完成', lifecycle: '生命周期', system: '系统',
     };
     const CHART_PHASE_LABELS = {
-        intake: '文档理解', config: '配置生成', schedule: '资源调度', analysis: '证据分析', report: '报告生成',
+        intake: '文档理解', config: '配置生成', code: '代码生成', schedule: '资源调度',
+        execute: '真实执行', analysis: '证据分析', report: '报告生成',
+    };
+    const EXECUTION_STATUS_LABELS = {
+        succeeded: '成功', failed: '失败', timed_out: '超时', invalid_output: '输出无效',
     };
     const TIER_LABELS = { cloud: '云', edge: '边', device: '端' };
-    const PHASE_PROGRESS = { intake: 4, config: 24, schedule: 58, analysis: 84, report: 96, completed: 100 };
+    const PHASE_PROGRESS = { intake: 4, config: 18, code: 28, schedule: 55, execute: 78, analysis: 90, report: 97, completed: 100 };
     const ACTIVE = new Set(['queued', 'running']);
     const state = {
         summaries: [], workspace: null, files: [], tab: 'config', cy: null,
@@ -178,8 +183,8 @@
 
     function phaseState(workspace, phase) {
         if (phase === 'retain') return workspace.resources_reclaimed ? 'reclaimed' : 'retained';
-        if (phase === 'analysis' && workspace.mode === 'resources') return 'skipped';
-        const order = ['intake', 'config', 'schedule', 'analysis', 'report', 'completed'];
+        if (['code', 'execute', 'analysis'].includes(phase) && workspace.mode === 'resources') return 'skipped';
+        const order = ['intake', 'config', 'code', 'schedule', 'execute', 'analysis', 'report', 'completed'];
         const current = order.indexOf(workspace.stage);
         const target = order.indexOf(phase);
         if (workspace.status === 'failed' && workspace.stage === phase) return 'failed';
@@ -192,33 +197,35 @@
     function workflowPositions() {
         const width = $('#workflowGraph').clientWidth;
         if (width < 520) {
-            return {
-                intake: { x: width * .2, y: 40 }, config: { x: width * .5, y: 40 },
-                schedule: { x: width * .8, y: 40 }, analysis: { x: width * .2, y: 155 },
-                report: { x: width * .5, y: 155 }, retain: { x: width * .8, y: 155 },
-            };
+            const ids = ['intake', 'config', 'code', 'schedule', 'execute', 'analysis', 'report', 'retain'];
+            return Object.fromEntries(ids.map((id, index) => [id, {
+                x: width * [.18, .5, .82][index % 3], y: 40 + Math.floor(index / 3) * 105,
+            }]));
         }
-        const gap = (width - 100) / 5;
-        return Object.fromEntries(['intake', 'config', 'schedule', 'analysis', 'report', 'retain']
-            .map((id, index) => [id, { x: 50 + gap * index, y: 88 }]));
+        const ids = ['intake', 'config', 'code', 'schedule', 'execute', 'analysis', 'report', 'retain'];
+        const gap = (width - 96) / (ids.length - 1);
+        return Object.fromEntries(ids.map((id, index) => [id, { x: 48 + gap * index, y: 88 }]));
     }
 
     function renderWorkflow(workspace) {
         if (!window.cytoscape) return;
         if (state.cy) state.cy.destroy();
         const positions = workflowPositions();
-        const labels = { intake: '文档理解 Agent', config: '配置 Agent', schedule: '资源调度', analysis: '分析 Agent', report: '报告 Agent', retain: '保留资源' };
+        const labels = {
+            intake: '文档理解', config: '配置 Agent', code: '代码生成', schedule: '资源调度',
+            execute: '真实执行', analysis: '分析 Agent', report: '报告 Agent', retain: '保留资源',
+        };
         const nodes = Object.keys(labels).map(id => ({
             data: { id, label: labels[id], state: phaseState(workspace, id) }, position: positions[id],
         }));
         const edgePairs = workspace.mode === 'resources'
             ? [['intake', 'config'], ['config', 'schedule'], ['schedule', 'report'], ['report', 'retain']]
-            : [['intake', 'config'], ['config', 'schedule'], ['schedule', 'analysis'], ['analysis', 'report'], ['report', 'retain']];
+            : [['intake', 'config'], ['config', 'code'], ['code', 'schedule'], ['schedule', 'execute'], ['execute', 'analysis'], ['analysis', 'report'], ['report', 'retain']];
         state.cy = cytoscape({
             container: $('#workflowGraph'), elements: [...nodes, ...edgePairs.map((pair, index) => ({ data: { id: `e${index}`, source: pair[0], target: pair[1] } }))],
             layout: { name: 'preset', fit: false }, minZoom: 1, maxZoom: 1, userZoomingEnabled: false, userPanningEnabled: false,
             style: [
-                { selector: 'node', style: { width: 90, height: 42, shape: 'round-rectangle', 'background-color': '#fafbfa', 'border-width': 1, 'border-color': '#dce4df', label: 'data(label)', color: '#657069', 'font-size': 10, 'font-family': 'sans-serif', 'text-valign': 'center', 'text-halign': 'center' } },
+                { selector: 'node', style: { width: 82, height: 42, shape: 'round-rectangle', 'background-color': '#fafbfa', 'border-width': 1, 'border-color': '#dce4df', label: 'data(label)', color: '#657069', 'font-size': 10, 'font-family': 'sans-serif', 'text-valign': 'center', 'text-halign': 'center' } },
                 { selector: 'node[state="active"]', style: { 'background-color': '#eef9f3', 'border-width': 2, 'border-color': '#168557', color: '#0b633d' } },
                 { selector: 'node[state="completed"]', style: { 'background-color': '#e9f7ef', 'border-color': '#25a86b', color: '#0f754b' } },
                 { selector: 'node[state="retained"]', style: { 'background-color': '#fdf4e3', 'border-color': '#d08a16', color: '#9a6208' } },
@@ -235,7 +242,7 @@
         $('#artifactList').innerHTML = (workspace.files || []).map(file => `
           <div class="artifact-item">
             <span class="artifact-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h8l4 4v16H6zM14 2v5h5M9 13h6M9 17h4"/></svg></span>
-            <span class="artifact-meta"><b title="${escapeHtml(file.original_name)}">${escapeHtml(file.original_name)}</b><small>${formatBytes(file.size)}</small></span>
+            <span class="artifact-meta"><b title="${escapeHtml(file.original_name)}">${escapeHtml(file.original_name)}</b><small>${file.artifact_type === 'generated_code' ? 'Agent 生成 · ' : ''}${formatBytes(file.size)}</small></span>
             <span class="artifact-actions">
               <button type="button" data-preview-file="${file.id}" title="预览" aria-label="预览"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="2.5"/></svg></button>
               <a href="/api/paper/workspaces/${workspace.id}/files/${file.id}/download" title="下载" aria-label="下载"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg></a>
@@ -248,7 +255,7 @@
         if (analysis.stage_durations?.length) return analysis.stage_durations;
         const groups = {};
         (workspace.events || []).forEach(event => {
-            if (!['config', 'schedule', 'analysis', 'report'].includes(event.phase)) return;
+            if (!['config', 'code', 'schedule', 'execute', 'analysis', 'report'].includes(event.phase)) return;
             const values = groups[event.phase] || [event.created_at, event.created_at];
             groups[event.phase] = [Math.min(values[0], event.created_at), Math.max(values[1], event.created_at)];
         });
@@ -257,13 +264,14 @@
 
     function renderCharts(workspace) {
         const placements = workspace.schedule_json?.placements || [];
+        const executions = workspace.schedule_json?.executions || [];
         const durations = derivedDurations(workspace);
         const checks = workspace.analysis_json?.checks || [];
         $('#metricRow').innerHTML = [
-            [workspace.files?.length || 0, '归档文件'],
+            [(workspace.files || []).filter(file => file.artifact_type !== 'generated_code').length, '输入文件'],
             [placements.length, '已调度 Units'],
+            [executions.filter(item => item.status === 'succeeded').length, `运行成功 / ${executions.length}`],
             [checks.filter(item => item.passed).length, `通过检查 / ${checks.length}`],
-            [workspace.retries || 0, '分析重试'],
         ].map(([value, label]) => `<div class="paper-metric"><b>${value}</b><small>${label}</small></div>`).join('');
         if (!window.echarts) return;
         state.durationChart ||= echarts.init($('#durationChart'));
@@ -309,6 +317,25 @@
                 ? DOMPurify.sanitize(marked.parse(workspace.report_md, { gfm: true, breaks: true }))
                 : `<pre class="json-view">${escapeHtml(workspace.report_md)}</pre>`;
             body.innerHTML = `<article class="report-view">${html}</article>`;
+            return;
+        }
+        if (state.tab === 'code') {
+            const program = workspace.config_json?.generated_program;
+            if (!program) { body.innerHTML = '<div class="inspector-empty">代码生成 Agent 尚未产出程序</div>'; return; }
+            body.innerHTML = `
+              <div class="program-meta"><b>${escapeHtml(program.runtime?.language || '')} ${escapeHtml(program.runtime?.version || '')}</b><span>${escapeHtml(program.runtime?.image || '')}</span><span>${program.runs?.length || 0} 个运行目标</span></div>
+              <pre class="code-view"><code>${escapeHtml(program.code || '')}</code></pre>`;
+            return;
+        }
+        if (state.tab === 'run') {
+            const executions = workspace.schedule_json?.executions || [];
+            body.innerHTML = executions.length ? executions.map(item => `
+              <section class="execution-result ${escapeHtml(item.status)}">
+                <header><b>${escapeHtml(item.pod_name || item.run_id)}</b><span>${EXECUTION_STATUS_LABELS[item.status] || escapeHtml(item.status)} · ${Number(item.duration_seconds || 0).toFixed(3)}s</span></header>
+                <small>${escapeHtml(item.node || '')} · exit ${item.exit_code ?? 'unknown'} · ${escapeHtml((item.arguments || []).join(' '))}</small>
+                <label>stdout</label><pre>${escapeHtml(item.stdout || '无输出')}</pre>
+                ${item.stderr ? `<label>stderr</label><pre class="stderr">${escapeHtml(item.stderr)}</pre>` : ''}
+              </section>`).join('') : '<div class="inspector-empty">尚未收集 Unit 运行输出</div>';
             return;
         }
         const values = {

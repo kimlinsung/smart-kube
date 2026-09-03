@@ -329,6 +329,7 @@ def create_ssh_pod(
     node_type: Optional[str] = None,
     experiment_id: Optional[int] = None,
     gpu: int = 0,
+    isolated: bool = False,
 ) -> dict:
     """创建一个安装并启动 SSHD 的 Pod，并通过 NodePort Service 暴露 22 端口。
 
@@ -436,6 +437,8 @@ def create_ssh_pod(
             arch_canonical=arch_canonical,
             node=node,
             node_type=node_type,
+            automount_service_account_token=not isolated,
+            enable_service_links=not isolated,
         ),
     )
 
@@ -788,6 +791,7 @@ def exec_in_pod(pod_name: str, command: list[str], timeout: int = 60) -> dict:
     )
     out, err = [], []
     deadline = time.time() + timeout
+    timed_out = False
     while resp.is_open():
         resp.update(timeout=1)
         if resp.peek_stdout():
@@ -795,9 +799,10 @@ def exec_in_pod(pod_name: str, command: list[str], timeout: int = 60) -> dict:
         if resp.peek_stderr():
             err.append(resp.read_stderr())
         if time.time() > deadline:
+            timed_out = True
             break
     resp.close()
-    return {"stdout": "".join(out), "stderr": "".join(err)}
+    return {"stdout": "".join(out), "stderr": "".join(err), "timed_out": timed_out}
 
 
 _DEFAULT_SHELL_CMD = (

@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
+import shlex
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import yaml
 
@@ -249,10 +252,59 @@ def _build_configuration(workspace, documents, intelligence):
     }
 
 
+def _align_configuration_runtime(configuration, program):
+    runtime_image = program["runtime"]["image"]
+    changes = []
+    for resource in configuration["resources"]:
+        if int(resource.get("gpu") or 0) > 0:
+            changes.append({
+                "tier": resource["tier"],
+                "kept_image": resource["image"],
+                "reason": "GPU Unit 使用集群 GPU 镜像，运行时需提供 Python 3.11",
+            })
+            continue
+        original = resource["image"]
+        resource["image"] = runtime_image
+        if original != runtime_image:
+            changes.append({
+                "tier": resource["tier"],
+                "original_image": original,
+                "runtime_image": runtime_image,
+                "reason": "对齐代码生成 Agent 的 Python 3.11 运行环境",
+            })
+    configuration["runtime_alignment"] = changes
+    configuration["generated_program"] = program
+    configuration.setdefault("agent_trace", []).append(program["agent_trace"])
+    return configuration
+
+
+def _persist_generated_program(workspace_id, user_id, internal_files, program):
+    if not internal_files:
+        raise RuntimeError("工作区没有可用的产物目录")
+    workspace_dir = os.path.dirname(internal_files[0]["stored_path"])
+    os.makedirs(workspace_dir, exist_ok=True)
+    filename = program["runtime"]["filename"]
+    stored_path = os.path.join(workspace_dir, filename)
+    with open(stored_path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(program["code"])
+        if not program["code"].endswith("\n"):
+            handle.write("\n")
+    return db.add_paper_workspace_file(
+        workspace_id,
+        user_id,
+        filename,
+        stored_path,
+        os.path.getsize(stored_path),
+        "text/x-python",
+        artifact_type="generated_code",
+    )
+
+
 def _schedule(user, experiment_id, configuration, workspace_id, task_id):
     requested = sum(row["count"] for row in configuration["resources"])
     created = []
     completed = 0
+    tier_indexes = {"cloud": 0, "edge": 0, "device": 0}
     for row in configuration["resources"]:
         for index in range(row["count"]):
             completed += 1
@@ -268,7 +320,10 @@ def _schedule(user, experiment_id, configuration, workspace_id, task_id):
                 node_type=row["tier"],
                 experiment_id=experiment_id,
                 gpu=row["gpu"],
+                isolated=True,
             )
+            tier_indexes[row["tier"]] += 1
+            placement["tier_index"] = tier_indexes[row["tier"]]
             created.append(placement)
             partial_schedule = {
                 "strategy": "existing-smart-kube-placement",
@@ -299,12 +354,190 @@ def _schedule(user, experiment_id, configuration, workspace_id, task_id):
     }
 
 
+def _wait_for_pod_ready(pod_name, timeout=120):
+    deadline = time.time() + timeout
+    last_status = None
+    while time.time() < deadline:
+        status = k8s_client.describe_pod(pod_name)
+        phase = status.get("phase")
+        containers = status.get("container_statuses") or []
+        ready = phase == "Running" and (
+            not containers or any(container.get("ready") for container in containers)
+        )
+        if ready:
+            return status
+        if phase in {"Failed", "Succeeded"}:
+            raise RuntimeError(f"Unit {pod_name} 无法执行代码，Pod 状态为 {phase}")
+        last_status = status
+        time.sleep(2)
+    phase = (last_status or {}).get("phase") or (last_status or {}).get("error") or "unknown"
+    raise TimeoutError(f"等待 Unit {pod_name} 就绪超时，最后状态：{phase}")
+
+
+def _extract_observation(stdout):
+    text = str(stdout or "").strip()
+    candidates = [text, *reversed(text.splitlines())] if text else []
+    for candidate in candidates:
+        try:
+            observation = json.loads(candidate)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(observation, dict):
+            continue
+        elapsed = observation.get("elapsed_seconds")
+        if (
+            not str(observation.get("status") or "").strip()
+            or isinstance(elapsed, bool)
+            or not isinstance(elapsed, (int, float))
+            or not math.isfinite(elapsed)
+            or elapsed < 0
+        ):
+            continue
+        return observation
+    return None
+
+
+def _parse_execution_result(raw, started_at, run, placement, command):
+    finished_at = time.time()
+    stdout = str(raw.get("stdout") or "")
+    stderr = str(raw.get("stderr") or "")
+    exit_matches = re.findall(r"__SMARTKUBE_EXIT_CODE__=(\d+)", stderr)
+    exit_code = int(exit_matches[-1]) if exit_matches else None
+    stderr = re.sub(r"\n?__SMARTKUBE_EXIT_CODE__=\d+\s*", "", stderr)
+    timed_out = bool(raw.get("timed_out")) or exit_code == 124
+    observation = _extract_observation(stdout)
+    if timed_out:
+        status = "timed_out"
+    elif exit_code != 0:
+        status = "failed"
+    elif observation is None:
+        status = "invalid_output"
+    elif str(observation["status"]).lower() in {"error", "failed", "failure"}:
+        status = "failed"
+    else:
+        status = "succeeded"
+    stdout_truncated = len(stdout) > 65_536
+    stderr_truncated = len(stderr) > 32_768
+    return {
+        **run,
+        "pod_name": placement["pod_name"],
+        "node": placement.get("node"),
+        "arch": placement.get("arch"),
+        "command": command,
+        "status": status,
+        "exit_code": exit_code,
+        "timed_out": timed_out,
+        "observation_valid": observation is not None,
+        "observation": observation,
+        "started_at": round(started_at, 3),
+        "finished_at": round(finished_at, 3),
+        "duration_seconds": round(finished_at - started_at, 3),
+        "stdout": stdout[:65_536],
+        "stderr": stderr[:32_768],
+        "stdout_truncated": stdout_truncated,
+        "stderr_truncated": stderr_truncated,
+    }
+
+
+def _run_on_placement(program, run, placement, pod_program_path):
+    timeout = int(program["runtime"]["timeout_seconds"])
+    command = [program["runtime"]["entrypoint"], pod_program_path, *run["arguments"]]
+    quoted = " ".join(shlex.quote(part) for part in command)
+    wrapped = (
+        f"timeout --signal=KILL {timeout}s {quoted}; "
+        "code=$?; printf '\n__SMARTKUBE_EXIT_CODE__=%s\n' \"$code\" >&2; exit \"$code\""
+    )
+    started_at = time.time()
+    try:
+        raw = k8s_client.exec_in_pod(
+            placement["pod_name"], ["/bin/sh", "-c", wrapped], timeout=timeout + 15
+        )
+    except Exception as exc:
+        raw = {"stdout": "", "stderr": str(exc), "timed_out": False}
+    return _parse_execution_result(raw, started_at, run, placement, command)
+
+
+def _execute_generated_program(
+    workspace_id, task_id, schedule, program, generated_path
+):
+    placements = {
+        (item["node_type"], int(item["tier_index"])): item
+        for item in schedule.get("placements", [])
+    }
+    prepared = []
+    for index, run in enumerate(program["runs"], start=1):
+        placement = placements[(run["target_tier"], int(run["target_index"]))]
+        pod_name = placement["pod_name"]
+        _advance(
+            workspace_id, task_id, "execute",
+            f"等待 {pod_name} 就绪并上传 Agent 代码", 72 + round(6 * index / len(program["runs"])),
+        )
+        runtime_status = _wait_for_pod_ready(pod_name)
+        destination = "/tmp/smart-kube-experiment"
+        k8s_client.exec_in_pod(pod_name, ["mkdir", "-p", destination], timeout=15)
+        pod_program_path = k8s_client.copy_to_pod(
+            pod_name, generated_path, dest_dir=destination,
+            filename=program["runtime"]["filename"],
+        )
+        prepared.append((run, placement, pod_program_path))
+        db.add_paper_workspace_event(
+            workspace_id, "execute", "prepared", f"{pod_name} 已就绪，Agent 代码上传完成",
+            data={
+                "pod_name": pod_name,
+                "phase": runtime_status.get("phase"),
+                "node": placement.get("node"),
+            },
+        )
+
+    results = []
+    with ThreadPoolExecutor(max_workers=min(8, len(prepared))) as executor:
+        futures = {
+            executor.submit(_run_on_placement, program, run, placement, pod_path): (run, placement)
+            for run, placement, pod_path in prepared
+        }
+        for completed, future in enumerate(as_completed(futures), start=1):
+            result = future.result()
+            results.append(result)
+            results.sort(key=lambda item: int(item["run_id"].split("-")[-1]))
+            schedule["executions"] = results
+            schedule["execution_summary"] = {
+                "total": len(program["runs"]),
+                "completed": len(results),
+                "succeeded": sum(item["status"] == "succeeded" for item in results),
+                "failed": sum(item["status"] != "succeeded" for item in results),
+            }
+            db.update_paper_workspace(workspace_id, schedule_json=schedule)
+            preview = (result["stdout"] or result["stderr"] or "无输出").strip()[:240]
+            status_label = {
+                "succeeded": "成功", "failed": "失败", "timed_out": "超时",
+                "invalid_output": "输出无效",
+            }.get(result["status"], result["status"])
+            db.add_paper_workspace_event(
+                workspace_id,
+                "execute",
+                "execution_completed" if result["status"] == "succeeded" else "execution_failed",
+                f"{result['pod_name']} 执行{status_label}，耗时 {result['duration_seconds']:.3f}s：{preview}",
+                data={key: result[key] for key in (
+                    "run_id", "pod_name", "node", "status", "exit_code", "duration_seconds"
+                )},
+            )
+            _task_update(
+                task_id,
+                status="running",
+                progress=78 + round(8 * completed / len(futures)),
+                detail=f"已收集 {completed}/{len(futures)} 个 Unit 的真实运行结果",
+                event_type="progress",
+                event_content=f"Unit 运行完成 {completed}/{len(futures)}",
+            )
+    return schedule
+
+
 def _analysis_telemetry(workspace):
     events = workspace.get("events") or []
     phase_bounds = {}
     for event in events:
         phase = event.get("phase")
-        if phase not in {"config", "schedule", "analysis", "report"}:
+        if phase not in {"config", "code", "schedule", "execute", "analysis", "report"}:
             continue
         bounds = phase_bounds.setdefault(phase, [event["created_at"], event["created_at"]])
         bounds[0] = min(bounds[0], event["created_at"])
@@ -381,23 +614,90 @@ def _execute_workspace(workspace_id, task_id, user, source_ip):
         configuration = _build_configuration(workspace, documents, intelligence)
         if not configuration["resources"]:
             raise ValueError("至少需要一项云、边或端资源")
-        inferred_spec = {row["tier"]: {key: value for key, value in row.items() if key != "tier"} for row in configuration["resources"]}
-        db.update_paper_workspace(workspace_id, config_json=configuration, resource_spec=inferred_spec)
+        inferred_spec = {
+            row["tier"]: {key: value for key, value in row.items() if key != "tier"}
+            for row in configuration["resources"]
+        }
+        db.update_paper_workspace(
+            workspace_id, config_json=configuration, resource_spec=inferred_spec
+        )
         for evidence in configuration["resource_inference"]["evidence"]:
             db.add_paper_workspace_event(workspace_id, "config", "inference", evidence)
         _advance(
-            workspace_id, task_id, "config", "配置 Agent 已生成配置并通过结构校验", 30,
-            event_type="agent_completed", data=configuration,
+            workspace_id,
+            task_id,
+            "config",
+            "配置 Agent 已生成配置并通过结构校验",
+            24,
+            event_type="agent_completed",
+            data={
+                "resources": configuration["resources"],
+                "workflow_steps": configuration["workflow_steps"],
+                "analysis_plan": configuration["analysis_plan"],
+                "assumptions": configuration["assumptions"],
+            },
         )
+
+        generated_artifact = None
+        if workspace["mode"] == "full":
+            _advance(
+                workspace_id, task_id, "code",
+                "代码生成 Agent 正在根据正文生成逐 Unit 可执行程序", 25,
+                event_type="agent_started",
+            )
+            program = paper_agents.run_code_agent(documents, intelligence, configuration)
+            configuration = _align_configuration_runtime(configuration, program)
+            generated_artifact = _persist_generated_program(
+                workspace_id, user["id"], internal_files, program
+            )
+            inferred_spec = {
+                row["tier"]: {key: value for key, value in row.items() if key != "tier"}
+                for row in configuration["resources"]
+            }
+            db.update_paper_workspace(
+                workspace_id, config_json=configuration, resource_spec=inferred_spec
+            )
+            _advance(
+                workspace_id,
+                task_id,
+                "code",
+                f"代码生成 Agent 已生成 {program['runtime']['filename']} 和 {len(program['runs'])} 项运行计划",
+                30,
+                event_type="agent_completed",
+                data={
+                    "runtime": program["runtime"],
+                    "runs": program["runs"],
+                    "expected_observations": program["expected_observations"],
+                },
+            )
 
         _advance(workspace_id, task_id, "schedule", "正在读取现有集群能力并生成落位", 35)
         schedule = _schedule(user, workspace["experiment_id"], configuration, workspace_id, task_id)
         db.update_paper_workspace(workspace_id, schedule_json=schedule)
-        _advance(workspace_id, task_id, "schedule", "资源调度完成，已保留运行实例", 72, data=schedule)
+        _advance(workspace_id, task_id, "schedule", "资源调度完成，已保留运行实例", 70, data=schedule)
 
         workspace = db.get_paper_workspace(workspace_id, user_id=user["id"])
         if workspace["mode"] == "full":
-            _advance(workspace_id, task_id, "analysis", "分析 Agent 正在核验配置、落位和过程证据", 82, event_type="agent_started")
+            _advance(
+                workspace_id, task_id, "execute",
+                "正在等待 Units 就绪并执行 Agent 生成的程序", 72,
+                event_type="started",
+            )
+            schedule = _execute_generated_program(
+                workspace_id,
+                task_id,
+                schedule,
+                configuration["generated_program"],
+                generated_artifact["stored_path"],
+            )
+            db.update_paper_workspace(workspace_id, schedule_json=schedule)
+            _advance(
+                workspace_id, task_id, "execute",
+                f"真实运行完成：{schedule['execution_summary']['succeeded']}/{schedule['execution_summary']['total']} 成功",
+                86, data=schedule["execution_summary"],
+            )
+            workspace = db.get_paper_workspace(workspace_id, user_id=user["id"])
+            _advance(workspace_id, task_id, "analysis", "分析 Agent 正在分析真实代码输出和耗时", 88, event_type="agent_started")
             analysis = paper_agents.run_analysis_agent(
                 workspace.get("config_json") or {},
                 workspace.get("schedule_json") or {},
@@ -408,7 +708,7 @@ def _execute_workspace(workspace_id, task_id, user, source_ip):
             db.update_paper_workspace(workspace_id, analysis_json=analysis)
             _advance(
                 workspace_id, task_id, "analysis",
-                f"分析 Agent 完成，结论：{analysis['verdict']}", 94,
+                f"分析 Agent 完成，结论：{analysis['verdict']}", 95,
                 event_type="agent_completed", data=analysis,
             )
         else:

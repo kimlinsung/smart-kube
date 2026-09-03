@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -46,6 +47,33 @@ def fake_configuration(_documents, _intelligence, rule_evidence, mode):
     }
 
 
+def fake_code(_documents, _intelligence, configuration):
+    runs = []
+    tier_indexes = {"cloud": 0, "edge": 0, "device": 0}
+    for resource in configuration["resources"]:
+        for _ in range(resource["count"]):
+            tier_indexes[resource["tier"]] += 1
+            target_index = tier_indexes[resource["tier"]]
+            runs.append({
+                "run_id": f"run-{len(runs) + 1}",
+                "target_tier": resource["tier"],
+                "target_index": target_index,
+                "arguments": ["--delay", str(target_index)],
+                "purpose": "测量输出耗时",
+            })
+    return {
+        "runtime": {
+            "language": "python", "version": "3.11", "image": "python:3.11-slim",
+            "filename": "agent_experiment.py", "entrypoint": "python", "timeout_seconds": 30,
+        },
+        "code": "import json\nprint(json.dumps({'status': 'ok', 'elapsed_seconds': 0.01}))\n",
+        "runs": runs,
+        "expected_observations": ["每个 Unit 输出实际耗时"],
+        "assumptions": [],
+        "agent_trace": {"agent": "代码生成 Agent", "model": "test-model"},
+    }
+
+
 def fake_analysis(_configuration, schedule, _events, retry=0):
     created = schedule.get("created", 0)
     requested = schedule.get("requested", 0)
@@ -77,6 +105,7 @@ def agent_patches(**overrides):
         "extract_documents": fake_documents,
         "run_intent_agent": fake_intelligence,
         "run_config_agent": fake_configuration,
+        "run_code_agent": fake_code,
         "run_analysis_agent": fake_analysis,
         "run_report_agent": fake_report,
     }
@@ -96,7 +125,90 @@ class TemporaryDatabaseTest(unittest.TestCase):
         self.temp_dir.cleanup()
 
 
+class PaperWorkspaceMigrationTest(TemporaryDatabaseTest):
+    def test_legacy_workspace_files_keep_rows_and_default_to_input(self):
+        os.remove(db.DB_PATH)
+        with sqlite3.connect(db.DB_PATH) as connection:
+            connection.execute(
+                """
+                CREATE TABLE paper_workspace_files (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    workspace_id TEXT NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    original_name TEXT NOT NULL,
+                    stored_path TEXT NOT NULL,
+                    size INTEGER NOT NULL DEFAULT 0,
+                    content_type TEXT,
+                    created_at INTEGER NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "INSERT INTO paper_workspace_files("
+                "workspace_id,user_id,original_name,stored_path,size,content_type,created_at"
+                ") VALUES(?,?,?,?,?,?,?)",
+                ("legacy-workspace", 7, "input.md", "/tmp/input.md", 12, "text/markdown", 100),
+            )
+
+        db.init_db()
+
+        with sqlite3.connect(db.DB_PATH) as connection:
+            connection.row_factory = sqlite3.Row
+            columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(paper_workspace_files)")
+            }
+            row = connection.execute(
+                "SELECT * FROM paper_workspace_files WHERE workspace_id=?", ("legacy-workspace",)
+            ).fetchone()
+        self.assertIn("artifact_type", columns)
+        self.assertEqual(row["original_name"], "input.md")
+        self.assertEqual(row["artifact_type"], "input")
+
+
 class PaperAgentAdapterTest(unittest.TestCase):
+    def test_code_agent_generates_two_cloud_runs_with_distinct_delays(self):
+        code = (
+            "import argparse, json, time\n"
+            "parser = argparse.ArgumentParser()\n"
+            "parser.add_argument('--delay', type=float, required=True)\n"
+            "args = parser.parse_args()\n"
+            "started = time.perf_counter()\n"
+            "time.sleep(args.delay)\n"
+            "print(json.dumps({'status': 'ok', 'elapsed_seconds': time.perf_counter() - started}))\n"
+        )
+        response = SimpleNamespace(
+            content=json.dumps({
+                "runtime": {"timeout_seconds": 30},
+                "code": code,
+                "runs": [
+                    {"target_tier": "cloud", "target_index": 1, "arguments": ["--delay", "10"], "purpose": "10 秒测量"},
+                    {"target_tier": "cloud", "target_index": 2, "arguments": ["--delay", "5"], "purpose": "5 秒测量"},
+                ],
+                "expected_observations": ["两个 Unit 分别输出约 10 秒和 5 秒"],
+                "assumptions": [],
+            }, ensure_ascii=False),
+            usage_metadata={}, response_metadata={},
+        )
+        llm = mock.Mock()
+        llm.invoke.return_value = response
+        configuration = {"resources": [
+            {
+                "tier": "cloud", "count": 1, "arch": "amd64", "image": "ubuntu:22.04",
+                "cpu": "500m", "memory": "512Mi", "gpu": 0,
+            },
+            {
+                "tier": "cloud", "count": 1, "arch": "amd64", "image": "ubuntu:22.04",
+                "cpu": "500m", "memory": "512Mi", "gpu": 0,
+            },
+        ]}
+        with mock.patch("backend.paper_agents._make_llm", return_value=llm):
+            result = paper_agents.run_code_agent(fake_documents([]), fake_intelligence([]), configuration)
+
+        self.assertEqual(result["runtime"]["image"], "python:3.11-slim")
+        self.assertEqual(result["runs"][0]["arguments"], ["--delay", "10"])
+        self.assertEqual(result["runs"][1]["arguments"], ["--delay", "5"])
+        compile(result["code"], result["runtime"]["filename"], "exec")
+
     def test_intent_agent_accepts_fenced_json_and_validates_metadata(self):
         response = SimpleNamespace(
             content="""```json
@@ -185,6 +297,54 @@ class PaperAgentAdapterTest(unittest.TestCase):
 
 
 class PaperWorkspaceJobTest(TemporaryDatabaseTest):
+    def test_execution_timeout_is_persisted_as_timed_out(self):
+        run = {
+            "run_id": "run-1", "target_tier": "cloud", "target_index": 1,
+            "arguments": ["--delay", "10"], "purpose": "超时测试",
+        }
+        placement = {
+            "pod_name": "unit-cloud", "node": "cloud-1", "arch": "amd64",
+        }
+        with mock.patch("backend.paper_jobs.time.time", return_value=101.5):
+            result = paper_jobs._parse_execution_result(
+                {
+                    "stdout": "partial output\n",
+                    "stderr": "terminated\n__SMARTKUBE_EXIT_CODE__=124\n",
+                    "timed_out": False,
+                },
+                100.0,
+                run,
+                placement,
+                ["python", "/tmp/agent_experiment.py", "--delay", "10"],
+            )
+
+        self.assertEqual(result["status"], "timed_out")
+        self.assertEqual(result["exit_code"], 124)
+        self.assertTrue(result["timed_out"])
+        self.assertEqual(result["duration_seconds"], 1.5)
+        self.assertNotIn("__SMARTKUBE_EXIT_CODE__", result["stderr"])
+
+    def test_zero_exit_without_structured_observation_is_not_success(self):
+        with mock.patch("backend.paper_jobs.time.time", return_value=101.0):
+            result = paper_jobs._parse_execution_result(
+                {
+                    "stdout": "hello world\n",
+                    "stderr": "__SMARTKUBE_EXIT_CODE__=0\n",
+                    "timed_out": False,
+                },
+                100.0,
+                {
+                    "run_id": "run-1", "target_tier": "cloud", "target_index": 1,
+                    "arguments": [], "purpose": "输出测试",
+                },
+                {"pod_name": "unit-cloud", "node": "cloud-1", "arch": "amd64"},
+                ["python", "/tmp/agent_experiment.py"],
+            )
+
+        self.assertEqual(result["status"], "invalid_output")
+        self.assertFalse(result["observation_valid"])
+        self.assertIsNone(result["observation"])
+
     def test_running_workspace_is_restored_as_interrupted(self):
         user, _ = auth.create_user("restart-runner", "secret123")
         experiment = db.create_experiment(user["id"], "重启恢复")
@@ -232,15 +392,38 @@ class PaperWorkspaceJobTest(TemporaryDatabaseTest):
                 "gpu": kwargs["gpu"],
             }
 
-        with agent_patches(), mock.patch("backend.paper_jobs.k8s_client.create_ssh_pod", side_effect=fake_create), mock.patch(
+        def fake_exec(pod_name, command, timeout=60):
+            if command[:2] == ["mkdir", "-p"]:
+                return {"stdout": "", "stderr": "", "timed_out": False}
+            elapsed = "1.001" if pod_name == "unit-cloud" else "2.002"
+            return {
+                "stdout": f'{{"status":"ok","elapsed_seconds":{elapsed}}}\n',
+                "stderr": "\n__SMARTKUBE_EXIT_CODE__=0\n",
+                "timed_out": False,
+            }
+
+        with agent_patches(), mock.patch("backend.paper_jobs.k8s_client.create_ssh_pod", side_effect=fake_create) as create_pod, mock.patch(
             "backend.paper_jobs.k8s_client.delete_pods_by_experiment"
-        ) as delete_resources, mock.patch("backend.paper_jobs.task_events.publish_task"):
+        ) as delete_resources, mock.patch(
+            "backend.paper_jobs.k8s_client.describe_pod",
+            return_value={"phase": "Running", "container_statuses": [{"ready": True}]},
+        ), mock.patch(
+            "backend.paper_jobs.k8s_client.copy_to_pod", return_value="/tmp/smart-kube-experiment/agent_experiment.py"
+        ), mock.patch(
+            "backend.paper_jobs.k8s_client.exec_in_pod", side_effect=fake_exec
+        ), mock.patch("backend.paper_jobs.task_events.publish_task"):
             paper_jobs._execute_workspace(workspace["id"], task["id"], user, "203.0.113.30")
 
         completed = db.get_paper_workspace(workspace["id"], user_id=user["id"])
         self.assertEqual(completed["status"], "completed")
         self.assertEqual(completed["stage"], "completed")
         self.assertEqual(completed["schedule_json"]["created"], 2)
+        self.assertEqual(completed["schedule_json"]["execution_summary"]["succeeded"], 2)
+        self.assertEqual(len(completed["schedule_json"]["executions"]), 2)
+        self.assertIn("elapsed_seconds", completed["schedule_json"]["executions"][0]["stdout"])
+        self.assertTrue(completed["schedule_json"]["executions"][0]["observation_valid"])
+        self.assertTrue(any(file["artifact_type"] == "generated_code" for file in completed["files"]))
+        self.assertTrue(all(call.kwargs["isolated"] for call in create_pod.call_args_list))
         self.assertEqual(completed["name"], "正文理解生成的云边协同实验")
         self.assertEqual(completed["goal"], "根据正文验证云边协同推理链路")
         self.assertEqual(completed["analysis_json"]["verdict"], "needs_attention")
@@ -249,6 +432,16 @@ class PaperWorkspaceJobTest(TemporaryDatabaseTest):
         self.assertIn("# 正文理解生成的云边协同实验 实验报告", completed["report_md"])
         self.assertFalse(completed["resources_reclaimed"])
         self.assertTrue(any(event["event_type"] == "placement" for event in completed["events"]))
+        completed_phases = [
+            event["phase"] for event in completed["events"]
+            if event["event_type"] == "agent_completed"
+        ]
+        self.assertLess(completed_phases.index("config"), completed_phases.index("code"))
+        config_event = next(
+            event for event in completed["events"]
+            if event["phase"] == "config" and event["event_type"] == "agent_completed"
+        )
+        self.assertNotIn("generated_program", config_event["data"])
         delete_resources.assert_not_called()
 
     def test_partial_schedule_is_persisted_when_later_placement_fails(self):
