@@ -48,8 +48,11 @@ function renderCard(exp) {
           <div class="exp-top">
               <span class="exp-avatar">${escapeHtml(initial)}</span>
               <div style="min-width:0;flex:1;">
-                  <div class="name clickable" data-act="view" data-id="${exp.id}" title="查看实验详情">
-                      ${escapeHtml(exp.name)}${isCurrent ? '<span class="current-tag">当前</span>' : ''}${isCollaborator ? '<span class="collaborator-tag">协作</span>' : ''}
+                  <div class="exp-name-row">
+                    <div class="name clickable" data-act="view" data-id="${exp.id}" title="${escapeHtml(exp.name)}">
+                      ${escapeHtml(exp.name)}
+                    </div>
+                    ${isCurrent ? '<span class="current-tag">当前</span>' : ''}${isCollaborator ? '<span class="collaborator-tag">协作</span>' : ''}
                   </div>
                   <div class="meta">
                       ${ownerLine}
