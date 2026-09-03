@@ -175,6 +175,7 @@ python -m backend.app
 - 列表页 15s 自动刷新 phase（Running/Pending/Failed/CrashLoopBackOff…）
 - SSH NodePort 端口在 SQLite 内分配/回收，避免碰撞
 - 删除 Pod 同时删除其 Service 与端口分配记录
+- 论文工作区支持“回收资源”（仅删除 Units，保留输入、生成代码、报告和过程记录）和“删除工作区”（同时删除资源、文件、生成内容、任务记录和关联实验）
 
 ## API 速查
 
@@ -191,6 +192,7 @@ python -m backend.app
 | GET/DELETE | `/api/chat/history` | 对话历史 |
 | POST | `/api/upload` | 上传文件至 server（最近一次给 Agent 用） |
 | POST | `/api/upload/to_pod` | 上传文件直送 Pod |
+| POST/DELETE | `/api/paper/workspaces/<id>/reclaim` / `/api/paper/workspaces/<id>` | 仅回收工作区计算资源 / 彻底删除工作区 |
 | GET  | `/api/logs` | 操作日志（普通用户仅自己的） |
 | GET  | `/api/admin/nodes` | [admin] 节点列表 |
 | DELETE | `/api/admin/nodes/<n>` | [admin] 删除节点 |

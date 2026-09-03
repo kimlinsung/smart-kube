@@ -370,6 +370,7 @@
         $('#manageSharing').href = `/experiment_detail.html?id=${workspace.experiment_id}#sharing`;
         $('#retryAnalysis').hidden = !canOperate || workspace.mode !== 'full' || ACTIVE.has(workspace.status);
         $('#reclaimResources').hidden = !canOperate || ACTIVE.has(workspace.status) || workspace.resources_reclaimed || !(workspace.schedule_json?.created > 0);
+        $('#deleteWorkspace').hidden = !canOperate || ACTIVE.has(workspace.status);
         renderWorkflow(workspace);
         renderArtifacts(workspace);
         renderCharts(workspace);
@@ -421,6 +422,25 @@
         }
     }
 
+    async function deleteWorkspace() {
+        if (!state.workspace || !confirm('确认彻底删除此工作区？所有 Units、上传文件、Agent 生成代码、报告和过程记录都会被删除，且无法恢复。')) return;
+        const button = $('#deleteWorkspace');
+        button.disabled = true;
+        try {
+            await API.deletePaperWorkspace(state.workspace.id);
+            state.workspace = null;
+            renderWorkspace();
+            await loadSummaries();
+            const next = state.summaries[0];
+            if (next) await loadWorkspace(next.id);
+            else history.replaceState(null, '', '/paper_workspace.html');
+        } catch (error) {
+            alert(`删除工作区失败：${error.message}`);
+        } finally {
+            button.disabled = false;
+        }
+    }
+
     $('#newWorkspaceBtn').onclick = openLaunch;
     $('#emptyStartBtn').onclick = openLaunch;
     $('#closeMode').onclick = closeLaunch;
@@ -460,6 +480,7 @@
     };
     $('#retryAnalysis').onclick = retryAnalysis;
     $('#reclaimResources').onclick = reclaimResources;
+    $('#deleteWorkspace').onclick = deleteWorkspace;
     $('#closePreview').onclick = () => { $('#filePreviewBackdrop').hidden = true; };
     $('#filePreviewBackdrop').onclick = event => { if (event.target === event.currentTarget) event.currentTarget.hidden = true; };
     window.addEventListener('task:update', event => {

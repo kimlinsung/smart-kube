@@ -321,6 +321,7 @@ def _schedule(user, experiment_id, configuration, workspace_id, task_id):
                 experiment_id=experiment_id,
                 gpu=row["gpu"],
                 isolated=True,
+                allow_constraint_fallback=True,
             )
             tier_indexes[row["tier"]] += 1
             placement["tier_index"] = tier_indexes[row["tier"]]
@@ -337,12 +338,19 @@ def _schedule(user, experiment_id, configuration, workspace_id, task_id):
                 workspace_id,
                 "schedule",
                 "placement",
-                f"{placement['pod_name']} 已落位到 {placement['node']}",
+                (
+                    f"{placement['pod_name']} 已落位到 {placement['node']}"
+                    + (
+                        f"（已放宽：{'、'.join(placement['scheduling']['relaxed'])}）"
+                        if placement.get("scheduling", {}).get("relaxed") else ""
+                    )
+                ),
                 data={
                     "pod_name": placement["pod_name"],
                     "node": placement["node"],
                     "tier": placement["node_type"],
                     "arch": placement["arch"],
+                    "scheduling": placement.get("scheduling", {}),
                 },
             )
     return {

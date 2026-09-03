@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import time
 import uuid
 
@@ -724,6 +725,48 @@ def reclaim_paper_workspace(workspace_id):
     )
     updated = db.get_paper_workspace(workspace_id, user_id=u["id"])
     return jsonify({"ok": True, "deleted_pods": deleted, "workspace": _paper_workspace_payload(updated)})
+
+
+@bp.delete("/paper/workspaces/<workspace_id>")
+@auth.login_required
+def delete_paper_workspace(workspace_id):
+    """彻底删除单个工作区及其关联实验、Kubernetes 资源和存储产物。"""
+    u = request.current_user
+    workspace = db.get_paper_workspace(workspace_id, include_details=False)
+    if not workspace:
+        return jsonify({"error": "工作区不存在"}), 404
+    if workspace["user_id"] != u["id"]:
+        return jsonify({"error": "仅实验所有者可以删除工作区"}), 403
+    if workspace["status"] in {"queued", "running"}:
+        return jsonify({"error": "工作流仍在执行，暂不能删除"}), 409
+
+    try:
+        deleted_pods = k8s_client.delete_pods_by_experiment(workspace["experiment_id"])
+    except Exception as exc:
+        return jsonify({"error": f"清理 Pod 失败：{exc}"}), 500
+
+    stored_paths = db.delete_experiment(workspace["experiment_id"])
+    for path in stored_paths:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+    workspace_root = os.path.realpath(
+        os.path.join(UPLOAD_DIR, str(u["id"]), "paper", workspace["id"])
+    )
+    paper_root = os.path.realpath(os.path.join(UPLOAD_DIR, str(u["id"]), "paper"))
+    if os.path.commonpath((paper_root, workspace_root)) == paper_root and workspace_root != paper_root:
+        shutil.rmtree(workspace_root, ignore_errors=True)
+
+    if session.get("current_experiment_id") == workspace["experiment_id"]:
+        session["current_experiment_id"] = db.ensure_default_experiment(u["id"])
+    audit.log(
+        u["id"], u["username"], "paper_workspace_delete",
+        json.dumps({"workspace_id": workspace_id, "deleted_pods": deleted_pods}),
+        source_ip=client_ip(),
+    )
+    return jsonify({"ok": True, "deleted_pods": deleted_pods})
 
 
 @bp.post("/upload/to_pod")

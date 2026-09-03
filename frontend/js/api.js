@@ -101,6 +101,7 @@ const API = {
     },
     retryPaperAnalysis(id) { return this.post(`/api/paper/workspaces/${encodeURIComponent(id)}/analysis/retry`); },
     reclaimPaperWorkspace(id) { return this.post(`/api/paper/workspaces/${encodeURIComponent(id)}/reclaim`); },
+    deletePaperWorkspace(id) { return this.del(`/api/paper/workspaces/${encodeURIComponent(id)}`); },
     uploadToPod(file, podName, destDir='/tmp') {
         const fd = new FormData();
         fd.append('file', file);

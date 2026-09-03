@@ -318,6 +318,43 @@ class KubernetesStartupTest(unittest.TestCase):
         )
 
 
+class KubernetesSchedulingFallbackTest(unittest.TestCase):
+    def test_workspace_fallback_relaxes_gpu_then_node_type(self):
+        nodes = [
+            {
+                "name": "cpu-edge", "hostname": "cpu-edge", "arch": "amd64",
+                "node_type": "edge", "ready": "True", "allocatable": {}, "capacity": {},
+            },
+        ]
+        with mock.patch.object(k8s_client, "list_nodes", return_value=nodes):
+            node, selection = k8s_client._select_node_with_fallback(
+                arch="amd64", hostname=None, node_type="cloud", gpu=1,
+                allow_constraint_fallback=True,
+            )
+
+        self.assertEqual(node["name"], "cpu-edge")
+        self.assertEqual(selection["effective"], {
+            "arch": "amd64", "hostname": None, "node_type": None, "gpu": 0,
+        })
+        self.assertEqual(selection["relaxed"], ["gpu", "node_type"])
+
+    def test_without_workspace_fallback_constraints_remain_strict(self):
+        nodes = [
+            {
+                "name": "cpu-edge", "hostname": "cpu-edge", "arch": "amd64",
+                "node_type": "edge", "ready": "True", "allocatable": {}, "capacity": {},
+            },
+        ]
+        with mock.patch.object(k8s_client, "list_nodes", return_value=nodes):
+            node, selection = k8s_client._select_node_with_fallback(
+                arch="amd64", hostname=None, node_type="cloud", gpu=1,
+                allow_constraint_fallback=False,
+            )
+
+        self.assertIsNone(node)
+        self.assertEqual(selection["relaxed"], [])
+
+
 class PaperWorkspaceJobTest(TemporaryDatabaseTest):
     def test_execution_timeout_is_persisted_as_timed_out(self):
         run = {
@@ -446,6 +483,7 @@ class PaperWorkspaceJobTest(TemporaryDatabaseTest):
         self.assertTrue(completed["schedule_json"]["executions"][0]["observation_valid"])
         self.assertTrue(any(file["artifact_type"] == "generated_code" for file in completed["files"]))
         self.assertTrue(all(call.kwargs["isolated"] for call in create_pod.call_args_list))
+        self.assertTrue(all(call.kwargs["allow_constraint_fallback"] for call in create_pod.call_args_list))
         self.assertEqual(completed["name"], "正文理解生成的云边协同实验")
         self.assertEqual(completed["goal"], "根据正文验证云边协同推理链路")
         self.assertEqual(completed["analysis_json"]["verdict"], "needs_attention")
@@ -628,6 +666,44 @@ class PaperWorkspaceApiTest(TemporaryDatabaseTest):
         self.assertTrue(persisted["resources_reclaimed"])
         self.assertEqual(persisted["report_md"], "# persisted")
         self.assertTrue(db.get_experiment(experiment["id"]))
+
+    def test_delete_workspace_removes_resources_records_and_artifacts(self):
+        experiment = db.create_experiment(self.user_id, "待删除工作区")
+        workspace = db.create_paper_workspace(
+            self.user_id, experiment["id"], "待删除工作区", "彻底清理", "full", {}
+        )
+        workspace_dir = os.path.join(
+            self.temp_dir.name, str(self.user_id), "paper", workspace["id"]
+        )
+        os.makedirs(workspace_dir)
+        input_path = os.path.join(workspace_dir, "input.md")
+        generated_path = os.path.join(workspace_dir, "agent_experiment.py")
+        with open(input_path, "w", encoding="utf-8") as handle:
+            handle.write("input")
+        with open(generated_path, "w", encoding="utf-8") as handle:
+            handle.write("generated")
+        db.add_paper_workspace_file(
+            workspace["id"], self.user_id, "input.md", input_path, 5, "text/markdown"
+        )
+        db.add_paper_workspace_file(
+            workspace["id"], self.user_id, "agent_experiment.py", generated_path, 9,
+            "text/x-python", artifact_type="generated_code",
+        )
+        task = db.create_execution_task(
+            self.user_id, experiment["id"], "paper", "待删除工作区",
+            metadata={"workspace_id": workspace["id"]},
+        )
+        db.update_paper_workspace(workspace["id"], status="completed", stage="completed")
+
+        with mock.patch("backend.routes_api.k8s_client.delete_pods_by_experiment", return_value=["unit-a"]):
+            response = self.client.delete(f"/api/paper/workspaces/{workspace['id']}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["deleted_pods"], ["unit-a"])
+        self.assertIsNone(db.get_paper_workspace(workspace["id"], user_id=self.user_id))
+        self.assertIsNone(db.get_experiment(experiment["id"]))
+        self.assertIsNone(db.get_execution_task(task["id"], user_id=self.user_id))
+        self.assertFalse(os.path.exists(workspace_dir))
 
     def test_admin_can_read_another_users_workspace(self):
         experiment = db.create_experiment(self.user_id + 999, "私有工作区")

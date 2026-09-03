@@ -1013,7 +1013,7 @@ def get_experiment_by_share_token(token: str) -> dict | None:
 
 
 def delete_experiment(exp_id: int):
-    """删除实验元数据并返回需要从磁盘移除的论文工作区文件路径。"""
+    """删除实验及其任务、工作区、上传文件元数据，返回待移除的磁盘路径。"""
     with cursor() as cur:
         cur.execute(
             "SELECT f.stored_path FROM paper_workspace_files f "
@@ -1021,6 +1021,14 @@ def delete_experiment(exp_id: int):
             (exp_id,),
         )
         stored_paths = [row["stored_path"] for row in cur.fetchall()]
+        cur.execute("SELECT stored_path FROM script_files WHERE experiment_id=?", (exp_id,))
+        stored_paths.extend(row["stored_path"] for row in cur.fetchall())
+        cur.execute("SELECT id FROM execution_tasks WHERE experiment_id=?", (exp_id,))
+        task_ids = [row["id"] for row in cur.fetchall()]
+        if task_ids:
+            marks = ",".join("?" for _ in task_ids)
+            cur.execute(f"DELETE FROM task_events WHERE task_id IN ({marks})", task_ids)
+        cur.execute("DELETE FROM execution_tasks WHERE experiment_id=?", (exp_id,))
         cur.execute("SELECT id FROM paper_workspaces WHERE experiment_id=?", (exp_id,))
         workspace_ids = [row["id"] for row in cur.fetchall()]
         if workspace_ids:
@@ -1031,6 +1039,7 @@ def delete_experiment(exp_id: int):
         cur.execute("DELETE FROM experiment_collaborators WHERE experiment_id=?", (exp_id,))
         cur.execute("DELETE FROM experiment_shares WHERE experiment_id=?", (exp_id,))
         cur.execute("DELETE FROM chat_history WHERE experiment_id=?", (exp_id,))
+        cur.execute("DELETE FROM script_files WHERE experiment_id=?", (exp_id,))
         cur.execute("DELETE FROM experiments WHERE id=?", (exp_id,))
     return stored_paths
 

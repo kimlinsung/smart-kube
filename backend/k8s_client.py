@@ -29,7 +29,6 @@ from .config import (
     ARCH_IMAGES,
     KUBECONFIG,
     NAMESPACE,
-    PROXY_CONF,
     RES_CONF,
     SSH_CONF,
 )
@@ -64,46 +63,6 @@ _ARCH_ALIASES: dict[str, str] = {
 def _normalize_arch(arch: str) -> str:
     """将用户输入的架构名规范化为 kubernetes.io/arch 标准值。"""
     return _ARCH_ALIASES.get(arch.lower(), arch.lower())
-
-
-def _proxy_export_snippet() -> str:
-    """返回容器 init 阶段用的代理 export 片段；未启用时返回空串。"""
-    if not PROXY_CONF or not PROXY_CONF.get("enabled"):
-        return ""
-    parts = []
-    if PROXY_CONF.get("http"):
-        parts.append(f"export http_proxy={PROXY_CONF['http']}")
-        parts.append(f"export HTTP_PROXY={PROXY_CONF['http']}")
-    if PROXY_CONF.get("https"):
-        parts.append(f"export https_proxy={PROXY_CONF['https']}")
-        parts.append(f"export HTTPS_PROXY={PROXY_CONF['https']}")
-    if PROXY_CONF.get("all"):
-        parts.append(f"export all_proxy={PROXY_CONF['all']}")
-        parts.append(f"export ALL_PROXY={PROXY_CONF['all']}")
-    if PROXY_CONF.get("no_proxy"):
-        parts.append(f"export no_proxy={PROXY_CONF['no_proxy']}")
-        parts.append(f"export NO_PROXY={PROXY_CONF['no_proxy']}")
-    if not parts:
-        return ""
-    return "; ".join(parts) + "; "
-
-
-_PROXY_UNSET_SNIPPET = (
-    "unset http_proxy HTTP_PROXY https_proxy HTTPS_PROXY "
-    "all_proxy ALL_PROXY no_proxy NO_PROXY; "
-)
-
-
-def _wrap_init_with_proxy(init_cmd: str) -> str:
-    """把容器 init 命令包成 `export proxy ; <init> ; unset proxy`。
-
-    业务节点可能没有公网访问，init 时通过代理出网；init 完成后 unset，
-    避免污染后续业务进程（sshd/sleep 等）的环境。
-    """
-    export = _proxy_export_snippet()
-    if not export:
-        return init_cmd
-    return f"{export}{init_cmd}; {_PROXY_UNSET_SNIPPET}"
 
 
 # --------------------------------------------------------------------------------------
@@ -245,6 +204,66 @@ def find_node_by_arch_or_hostname(
     return None
 
 
+def _select_node_with_fallback(
+    arch: Optional[str],
+    hostname: Optional[str],
+    node_type: Optional[str],
+    gpu: int,
+    allow_constraint_fallback: bool,
+) -> tuple[Optional[dict], dict]:
+    """选择节点；工作区可依次放宽 GPU、节点类型和架构。
+
+    hostname 始终是硬约束。资源偏好逐步放宽时保留完整记录，供工作区展示
+    实际采用的条件，避免用户误以为任务按原始规格运行。
+    """
+    requested = {
+        "arch": arch,
+        "hostname": hostname,
+        "node_type": node_type,
+        "gpu": gpu,
+    }
+    attempts = [(arch, node_type, gpu)]
+    if allow_constraint_fallback:
+        relaxed_gpu = 0 if gpu > 0 else gpu
+        if gpu > 0:
+            attempts.append((arch, node_type, relaxed_gpu))
+        if node_type:
+            attempts.append((arch, None, relaxed_gpu))
+        if arch:
+            attempts.append((None, None, relaxed_gpu))
+
+    seen = set()
+    for attempt_arch, attempt_node_type, attempt_gpu in attempts:
+        key = (attempt_arch, attempt_node_type, attempt_gpu)
+        if key in seen:
+            continue
+        seen.add(key)
+        node = find_node_by_arch_or_hostname(
+            arch=attempt_arch,
+            hostname=hostname,
+            node_type=attempt_node_type,
+            gpu=attempt_gpu,
+        )
+        if not node:
+            continue
+        effective = {
+            "arch": attempt_arch,
+            "hostname": hostname,
+            "node_type": attempt_node_type,
+            "gpu": attempt_gpu,
+        }
+        relaxed = [
+            key for key in ("gpu", "node_type", "arch")
+            if requested[key] not in (None, 0, "") and requested[key] != effective[key]
+        ]
+        return node, {
+            "requested": requested,
+            "effective": effective,
+            "relaxed": relaxed,
+        }
+    return None, {"requested": requested, "effective": None, "relaxed": []}
+
+
 # --------------------------------------------------------------------------------------
 # Pod / Service
 # --------------------------------------------------------------------------------------
@@ -334,6 +353,7 @@ def create_ssh_pod(
     experiment_id: Optional[int] = None,
     gpu: int = 0,
     isolated: bool = False,
+    allow_constraint_fallback: bool = False,
 ) -> dict:
     """创建一个安装并启动 SSHD 的 Pod，并通过 NodePort Service 暴露 22 端口。
 
@@ -343,8 +363,12 @@ def create_ssh_pod(
     ensure_namespace()
     gpu = max(0, int(gpu or 0))
     arch_canonical = _normalize_arch(arch) if arch else None
-    node = find_node_by_arch_or_hostname(
-        arch=arch_canonical, hostname=hostname, node_type=node_type, gpu=gpu,
+    node, selection = _select_node_with_fallback(
+        arch=arch_canonical,
+        hostname=hostname,
+        node_type=node_type,
+        gpu=gpu,
+        allow_constraint_fallback=allow_constraint_fallback,
     )
     if not node:
         parts = []
@@ -353,20 +377,25 @@ def create_ssh_pod(
         if node_type:  parts.append(f"node-type={node_type}")
         if gpu > 0:    parts.append(f"nvidia.com/gpu>={gpu}")
         cond = "，".join(parts) if parts else "（集群无就绪节点）"
-        raise RuntimeError(f"未找到符合条件的就绪节点：{cond}")
+        fallback_note = "；已依次尝试放宽 GPU、节点类型和架构" if allow_constraint_fallback else ""
+        raise RuntimeError(f"未找到符合条件的就绪节点：{cond}{fallback_note}")
 
-    if gpu > 0:
+    effective = selection["effective"]
+    effective_arch = effective["arch"]
+    effective_node_type = effective["node_type"]
+    effective_gpu = effective["gpu"]
+
+    if effective_gpu > 0:
         # 申请 GPU 时强制使用 CUDA 镜像，避免镜像内缺驱动/库导致跑不起来
         image_resolved = GPU_IMAGE
     else:
-        image_resolved = _resolve_image(arch_canonical or node["arch"], image)
+        image_resolved = _resolve_image(effective_arch or node["arch"], image)
     owner_label = str(user["id"])
     pod_name = _make_pod_name(name_prefix, user["username"])
     root_pwd = SSH_CONF.get("default_root_password", "smartkube")
     nodeport = _allocate_ssh_port(pod_name, user["id"])
 
-    # 启动脚本：安装并启动 sshd（兼容 debian/ubuntu 系镜像）
-    # init 阶段用代理出网（业务节点可能无公网），init 完成后 unset，避免污染 sshd 进程
+    # 启动脚本：安装并启动 sshd（兼容 debian/ubuntu 系镜像）。
     init_cmd = (
         "set -e; "
         "if ! command -v sshd >/dev/null 2>&1; then "
@@ -384,8 +413,8 @@ def create_ssh_pod(
     # sshd 尽力而为地后台启动（装失败/无网也不致命），PID 1 用 sleep infinity 保持容器存活，
     # 这样即便 SSH 起不来，平台仍可通过 kubectl exec（Web Shell）进入容器，避免 CrashLoopBackOff。
     start_cmd = (
-        _wrap_init_with_proxy(init_cmd)
-        + "( /usr/sbin/sshd -D -e || echo '[smart-kube] sshd unavailable' ) & "
+        init_cmd
+        + "; ( /usr/sbin/sshd -D -e || echo '[smart-kube] sshd unavailable' ) & "
         + "exec sleep infinity"
     )
 
@@ -397,9 +426,9 @@ def create_ssh_pod(
         "cpu": cpu or RES_CONF.get("default_cpu_limit", "1"),
         "memory": memory or RES_CONF.get("default_memory_limit", "1Gi"),
     }
-    if gpu > 0:
+    if effective_gpu > 0:
         # extended resources（如 nvidia.com/gpu）只能在 limits 上申请，且必须为整数
-        limits[GPU_RESOURCE_KEY] = str(gpu)
+        limits[GPU_RESOURCE_KEY] = str(effective_gpu)
 
     container = client.V1Container(
         name="main",
@@ -424,23 +453,23 @@ def create_ssh_pod(
             labels=labels,
             annotations={
                 "smartkube/owner-username": user["username"],
-                "smartkube/arch": arch_canonical or node["arch"] or "",
+                "smartkube/arch": effective_arch or node["arch"] or "",
                 "smartkube/node-type": node.get("node_type", "edge"),
                 "smartkube/image": image_resolved,
                 "smartkube/ssh-port": str(nodeport),
                 "smartkube/ssh-user": "root",
                 "smartkube/ssh-password": root_pwd,
                 "smartkube/experiment-id": str(experiment_id) if experiment_id else "",
-                "smartkube/gpu": str(gpu) if gpu > 0 else "",
+                "smartkube/gpu": str(effective_gpu) if effective_gpu > 0 else "",
             },
         ),
         spec=_build_pod_spec(
             containers=[container],
             restart_policy="Always",
             hostname=hostname,
-            arch_canonical=arch_canonical,
+            arch_canonical=effective_arch,
             node=node,
-            node_type=node_type,
+            node_type=effective_node_type,
             automount_service_account_token=not isolated,
             enable_service_links=not isolated,
         ),
@@ -481,7 +510,7 @@ def create_ssh_pod(
     return {
         "pod_name": pod_name,
         "node": node["name"],
-        "arch": arch_canonical or node["arch"],
+        "arch": effective_arch or node["arch"],
         "node_type": node.get("node_type", "edge"),
         "image": image_resolved,
         "ssh_host": node["internal_ip"] or node["hostname"] or node["name"],
@@ -490,7 +519,8 @@ def create_ssh_pod(
         "ssh_password": root_pwd,
         "ssh_command": f"ssh -p {nodeport} root@{node['internal_ip'] or node['name']}",
         "experiment_id": experiment_id,
-        "gpu": gpu,
+        "gpu": effective_gpu,
+        "scheduling": selection,
     }
 
 
@@ -906,9 +936,8 @@ def run_python_oneshot(
     progress(f"已选择节点 {node['name']}", 18)
     name = _make_pod_name("pyexec", user["username"])
 
-    # 让容器先睡眠等待我们 cp 文件后 exec 触发执行
-    # init 阶段（这里几乎没有 init）也走代理，确保 init 行为一致
-    pyinit_cmd = _wrap_init_with_proxy("echo '[smart-kube] pyexec ready'") + f"exec sleep {timeout + 60}"
+    # 让容器先睡眠等待我们 cp 文件后 exec 触发执行。
+    pyinit_cmd = f"echo '[smart-kube] pyexec ready'; exec sleep {timeout + 60}"
     container = client.V1Container(
         name="main",
         image=image,

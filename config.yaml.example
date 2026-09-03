@@ -47,15 +47,6 @@ resources:
   default_cpu_limit: "1"
   default_memory_limit: "1Gi"
 
-# 容器初始化阶段使用的网络代理（业务节点可能没有公网）
-# 留空或 enabled: false 时不注入；仅在容器 init 命令期间生效
-proxy:
-  enabled: false
-  http: "http://PROXY_HOST:PORT"
-  https: "http://PROXY_HOST:PORT"
-  all: "socks5://PROXY_HOST:PORT"
-  no_proxy: "localhost,127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.svc,.cluster.local"
-
 # 架构 -> 默认基础镜像映射（可按集群可用镜像调整）
 arch_images:
   amd64: "ubuntu:22.04"
