@@ -9,7 +9,7 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-from backend import auth, db, paper_agents, paper_jobs
+from backend import auth, db, k8s_client, paper_agents, paper_jobs
 from backend.app import create_app
 
 
@@ -294,6 +294,28 @@ class PaperAgentAdapterTest(unittest.TestCase):
 
         self.assertEqual(result["verdict"], "needs_attention")
         self.assertIn("verdict_guardrail", result["agent_trace"])
+
+
+class KubernetesStartupTest(unittest.TestCase):
+    def test_namespace_check_has_bounded_network_timeout(self):
+        with mock.patch.object(k8s_client, "core_v1") as core_v1:
+            k8s_client.ensure_namespace()
+
+        core_v1.read_namespace.assert_called_once_with(
+            k8s_client.NAMESPACE,
+            _request_timeout=k8s_client._STARTUP_REQUEST_TIMEOUT,
+        )
+
+    def test_legacy_pod_migration_list_has_bounded_network_timeout(self):
+        with mock.patch.object(k8s_client, "core_v1") as core_v1:
+            core_v1.list_namespaced_pod.return_value.items = []
+            migrated = k8s_client.migrate_unlabeled_pods_to(mock.Mock())
+
+        self.assertEqual(migrated, 0)
+        core_v1.list_namespaced_pod.assert_called_once_with(
+            k8s_client.NAMESPACE,
+            _request_timeout=k8s_client._STARTUP_REQUEST_TIMEOUT,
+        )
 
 
 class PaperWorkspaceJobTest(TemporaryDatabaseTest):

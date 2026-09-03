@@ -124,14 +124,18 @@ _load_kube()
 core_v1 = client.CoreV1Api()
 apps_v1 = client.AppsV1Api()
 version_api = client.VersionApi()
+_STARTUP_REQUEST_TIMEOUT = (3, 10)
 
 
 def ensure_namespace():
     try:
-        core_v1.read_namespace(NAMESPACE)
+        core_v1.read_namespace(NAMESPACE, _request_timeout=_STARTUP_REQUEST_TIMEOUT)
     except ApiException as e:
         if e.status == 404:
-            core_v1.create_namespace(client.V1Namespace(metadata=client.V1ObjectMeta(name=NAMESPACE)))
+            core_v1.create_namespace(
+                client.V1Namespace(metadata=client.V1ObjectMeta(name=NAMESPACE)),
+                _request_timeout=_STARTUP_REQUEST_TIMEOUT,
+            )
         else:
             raise
 
@@ -737,7 +741,9 @@ def migrate_unlabeled_pods_to(default_experiment_resolver) -> int:
     返回被打标签的 Pod 数量。
     """
     try:
-        pods = core_v1.list_namespaced_pod(NAMESPACE).items
+        pods = core_v1.list_namespaced_pod(
+            NAMESPACE, _request_timeout=_STARTUP_REQUEST_TIMEOUT
+        ).items
     except ApiException:
         return 0
     patched = 0
@@ -761,12 +767,22 @@ def migrate_unlabeled_pods_to(default_experiment_resolver) -> int:
             }
         }
         try:
-            core_v1.patch_namespaced_pod(p.metadata.name, NAMESPACE, body)
+            core_v1.patch_namespaced_pod(
+                p.metadata.name,
+                NAMESPACE,
+                body,
+                _request_timeout=_STARTUP_REQUEST_TIMEOUT,
+            )
             patched += 1
         except ApiException as e:
             log.warning("给 Pod %s 打实验标签失败: %s", p.metadata.name, e)
         try:
-            core_v1.patch_namespaced_service(p.metadata.name, NAMESPACE, body)
+            core_v1.patch_namespaced_service(
+                p.metadata.name,
+                NAMESPACE,
+                body,
+                _request_timeout=_STARTUP_REQUEST_TIMEOUT,
+            )
         except ApiException:
             pass
     return patched
