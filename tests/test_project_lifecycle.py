@@ -29,8 +29,8 @@ class ProjectLifecycleTest(unittest.TestCase):
         with mock.patch("backend.k8s_client.ensure_namespace"), mock.patch("backend.k8s_client.migrate_unlabeled_pods_to", return_value=0):
             self.app = create_app()
         self.app.config.update(TESTING=True)
-        self.user, _ = auth.create_user("project-owner", "secret123")
-        self.other, _ = auth.create_user("project-other", "secret123")
+        self.user, _ = auth.create_user("project-owner", "Te5t!Fixture_2026")
+        self.other, _ = auth.create_user("project-other", "Te5t!Fixture_2026")
         self.client = self.app.test_client()
         with self.client.session_transaction() as session:
             session["user_id"] = self.user["id"]

@@ -127,6 +127,7 @@ def login():
         return jsonify({"error": "用户名或密码错误"}), 401
     session.clear()
     session["user_id"] = user["id"]
+    session["credential_version"] = user["credential_version"]
     session["current_experiment_id"] = db.ensure_default_experiment(user["id"])
     audit.log(user["id"], user["username"], "login", "")
     return jsonify({"id": user["id"], "username": user["username"], "role": user["role"]})
@@ -150,9 +151,37 @@ def me():
     exp = db.get_experiment(exp_id) if exp_id else None
     return jsonify({
         **u,
+        "can_reset_with_feishu": bool(u.get("feishu_open_id") and session.get("login_via") == "feishu"
+            and 0 <= time.time() - session.get("feishu_verified_at", 0) <= 600),
         "current_experiment_id": exp_id,
         "current_experiment_name": exp["name"] if exp else None,
     })
+
+
+@bp.put("/me/password")
+@auth.login_required
+def change_own_password():
+    from urllib.parse import urlsplit
+    origin = request.headers.get("Origin")
+    if origin and urlsplit(origin).netloc != request.host:
+        return jsonify({"error": "不允许跨站修改密码"}), 403
+    if not request.is_json:
+        return jsonify({"error": "需要 JSON 请求"}), 415
+    data = request.get_json() or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "请求必须是对象"}), 400
+    u = request.current_user
+    recent_feishu = bool(u.get("feishu_open_id") and session.get("login_via") == "feishu"
+        and 0 <= time.time() - session.get("feishu_verified_at", 0) <= 600)
+    if not recent_feishu and not auth.authenticate(u["username"], data.get("current_password", "")):
+        return jsonify({"error": "请验证当前密码，或重新通过飞书登录后修改"}), 403
+    error = auth.change_password(u["id"], data.get("password"))
+    if error:
+        return jsonify({"error": error}), 400
+    session["credential_version"] = session.get("credential_version", 0) + 1
+    session.pop("feishu_verified_at", None)
+    audit.log(u["id"], u["username"], "change_own_password", "")
+    return jsonify({"ok": True})
 
 
 def _current_experiment_id(user: dict) -> int:
@@ -1060,6 +1089,20 @@ def add_experiment_collaborator(exp_id):
     })
 
 
+@bp.get("/experiments/<int:exp_id>/collaborator-candidates")
+@auth.login_required
+def collaboration_candidates(exp_id):
+    exp, role = _managed_experiment(exp_id, request.current_user)
+    if not exp:
+        return jsonify({"error": "实验不存在"}), 404
+    if not role:
+        return jsonify({"error": "无权搜索此实验的协作者"}), 403
+    query = request.args.get("q", "").strip()
+    if not 2 <= len(query) <= 80:
+        return jsonify({"candidates": []})
+    return jsonify({"candidates": db.search_collaboration_candidates(exp_id, query)})
+
+
 @bp.delete("/experiments/<int:exp_id>/collaborators/<int:user_id>")
 @auth.login_required
 def remove_experiment_collaborator(exp_id, user_id):
@@ -1361,7 +1404,7 @@ def admin_create_user():
 def admin_change_password(uid):
     u = request.current_user
     data = request.get_json(force=True) or {}
-    new_pwd = data.get("password", "").strip()
+    new_pwd = data.get("password", "")
     err = auth.change_password(uid, new_pwd)
     if err:
         return jsonify({"error": err}), 400

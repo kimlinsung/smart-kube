@@ -9,12 +9,13 @@ from __future__ import annotations
 import logging
 import os
 
-from flask import Flask, redirect, request, send_from_directory, session
+from flask import Flask, redirect, request, session
 from flask_cors import CORS
 from flask_sock import Sock
 
 from . import audit, auth, db, k8s_client, presence, routes_api, routes_feishu, routes_shell, task_events
 from .config import FLASK_CONF, FRONTEND_DIR
+from .static_assets import serve_frontend
 
 
 def create_app() -> Flask:
@@ -87,7 +88,7 @@ def create_app() -> Flask:
         # 其它 HTML 页面要求已登录，否则跳 login.html
         if not is_public and filename.endswith(".html") and not session.get("user_id"):
             return redirect(f"/login.html?next=/{filename}")
-        return send_from_directory(FRONTEND_DIR, filename)
+        return serve_frontend(FRONTEND_DIR, filename)
 
     @app.after_request
     def audit_page_view(response):

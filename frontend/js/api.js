@@ -138,6 +138,7 @@ const API = {
     adminUsers() { return this.get('/api/admin/users'); },
     adminCreateUser(u, p, role) { return this.post('/api/admin/users', { username: u, password: p, role }); },
     adminChangePassword(id, password) { return this.request('PUT', `/api/admin/users/${id}/password`, { password }); },
+    changeOwnPassword(password, current_password) { return this.request('PUT', '/api/me/password', {password, current_password}); },
     adminSetUserRole(id, role) { return this.request('PUT', `/api/admin/users/${id}/role`, { role }); },
     adminDeleteUser(id) { return this.del('/api/admin/users/' + id); },
 
@@ -148,6 +149,7 @@ const API = {
     deleteExperiment(id) { return this.del('/api/experiments/' + id); },
     deleteExperiments(ids) { return this.post('/api/experiments/batch-delete', { ids }); },
     experimentSharing(id) { return this.get(`/api/experiments/${id}/sharing`); },
+    collaborationCandidates(id, query) { return this.get(`/api/experiments/${id}/collaborator-candidates?q=${encodeURIComponent(query)}`); },
     addExperimentCollaborator(id, username) {
         return this.post(`/api/experiments/${id}/collaborators`, { username });
     },

@@ -273,6 +273,8 @@ def init_db():
         cur.execute("PRAGMA table_info(users)")
         ucols = {r["name"] for r in cur.fetchall()}
         for col, ddl in [
+            ("password_generated", "ALTER TABLE users ADD COLUMN password_generated INTEGER NOT NULL DEFAULT 0"),
+            ("credential_version", "ALTER TABLE users ADD COLUMN credential_version INTEGER NOT NULL DEFAULT 0"),
             ("feishu_open_id",   "ALTER TABLE users ADD COLUMN feishu_open_id TEXT"),
             ("feishu_union_id",  "ALTER TABLE users ADD COLUMN feishu_union_id TEXT"),
             ("name",             "ALTER TABLE users ADD COLUMN name TEXT"),
@@ -1089,6 +1091,21 @@ def find_user_by_username(username: str) -> dict | None:
         )
         row = cur.fetchone()
     return dict(row) if row else None
+
+
+def search_collaboration_candidates(exp_id: int, query: str) -> list[dict]:
+    pattern = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    with cursor() as cur:
+        cur.execute(
+            "SELECT u.id, u.username, u.name FROM users u "
+            "WHERE u.id != (SELECT user_id FROM experiments WHERE id=?) "
+            "AND NOT EXISTS (SELECT 1 FROM experiment_collaborators c "
+            "WHERE c.experiment_id=? AND c.user_id=u.id) "
+            "AND (u.username LIKE ? ESCAPE '\\' OR u.name LIKE ? ESCAPE '\\') "
+            "ORDER BY CASE WHEN u.username=? OR u.name=? THEN 0 ELSE 1 END, u.username LIMIT 12",
+            (exp_id, exp_id, pattern, pattern, query, query),
+        )
+        return [dict(row) for row in cur.fetchall()]
 
 
 def add_experiment_collaborator(exp_id: int, user_id: int, added_by: int) -> bool:

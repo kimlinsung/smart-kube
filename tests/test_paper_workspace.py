@@ -441,7 +441,7 @@ class PaperWorkspaceJobTest(TemporaryDatabaseTest):
         self.addCleanup(patcher.stop)
 
     def planning_workspace(self):
-        user, _ = auth.create_user("planner", "secret123")
+        user, _ = auth.create_user("planner", "Te5t!Fixture_2026")
         experiment = db.create_experiment(user["id"], "planning")
         return db.create_paper_workspace(user["id"], experiment["id"], "planning", "test", "full", {})
 
@@ -562,7 +562,7 @@ class PaperWorkspaceJobTest(TemporaryDatabaseTest):
         self.assertIsNone(result["observation"])
 
     def test_running_workspace_is_restored_as_interrupted(self):
-        user, _ = auth.create_user("restart-runner", "secret123")
+        user, _ = auth.create_user("restart-runner", "Te5t!Fixture_2026")
         experiment = db.create_experiment(user["id"], "重启恢复")
         workspace = db.create_paper_workspace(
             user["id"], experiment["id"], "重启恢复", "验证恢复", "full", {}
@@ -575,7 +575,7 @@ class PaperWorkspaceJobTest(TemporaryDatabaseTest):
         self.assertEqual(restored["events"][-1]["event_type"], "interrupted")
 
     def test_full_workflow_persists_artifacts_and_keeps_resources(self):
-        user, error = auth.create_user("paper-runner", "secret123")
+        user, error = auth.create_user("paper-runner", "Te5t!Fixture_2026")
         self.assertIsNone(error)
         experiment = db.create_experiment(user["id"], "跨架构实验")
         workspace = db.create_paper_workspace(
@@ -668,7 +668,7 @@ class PaperWorkspaceJobTest(TemporaryDatabaseTest):
         delete_resources.assert_not_called()
 
     def test_partial_schedule_is_persisted_when_later_placement_fails(self):
-        user, _ = auth.create_user("partial-runner", "secret123")
+        user, _ = auth.create_user("partial-runner", "Te5t!Fixture_2026")
         experiment = db.create_experiment(user["id"], "部分调度")
         workspace = db.create_paper_workspace(
             user["id"], experiment["id"], "部分调度", "测试失败保留", "full",
@@ -702,7 +702,7 @@ class PaperWorkspaceJobTest(TemporaryDatabaseTest):
         code_agent.assert_not_called()
 
     def test_llm_failure_is_visible_and_does_not_schedule(self):
-        user, _ = auth.create_user("agent-failure", "secret123")
+        user, _ = auth.create_user("agent-failure", "Te5t!Fixture_2026")
         experiment = db.create_experiment(user["id"], "临时实验")
         workspace = db.create_paper_workspace(
             user["id"], experiment["id"], "等待理解", "等待理解", "full", {}
@@ -728,7 +728,7 @@ class PaperWorkspaceJobTest(TemporaryDatabaseTest):
         create_pod.assert_not_called()
 
     def test_analysis_retry_calls_analysis_and_report_agents_again(self):
-        user, _ = auth.create_user("retry-agent", "secret123")
+        user, _ = auth.create_user("retry-agent", "Te5t!Fixture_2026")
         experiment = db.create_experiment(user["id"], "重试实验")
         workspace = db.create_paper_workspace(
             user["id"], experiment["id"], "重试实验", "重新评估证据", "full", {}

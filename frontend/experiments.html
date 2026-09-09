@@ -13,11 +13,13 @@
     <header class="topbar" id="topbar"></header>
     <div class="content">
 
-      <div class="toolbar">
+      <header class="experiment-page-heading"><div><span>RESEARCH / EXPERIMENTS</span><h1>实验项目</h1></div><button id="btnNew" class="primary">+ 新建实验</button></header>
+      <div class="experiment-filters"><label><input type="search" id="experimentSearch" placeholder="搜索实验名称或所有者" aria-label="搜索实验" /></label><select id="experimentScope" aria-label="实验范围"><option value="all">全部实验</option><option value="mine">我创建的</option><option value="shared">参与协作</option></select><select id="experimentSort" aria-label="实验排序"><option value="new">最近创建</option><option value="name">名称 A–Z</option><option value="resources">资源数量</option></select></div>
+      <div class="toolbar experiment-list-toolbar">
         <div class="left"><span id="expHint"><span class="spinner"></span> 加载中…</span></div>
-        <div class="right"><label><input type="checkbox" id="selectPage" /> 本页全选</label><button id="deleteSelected" class="danger" disabled>删除所选 (0)</button><button id="btnNew" class="primary">+ 新建实验</button></div>
+        <div class="right"><label><input type="checkbox" id="selectPage" /> 本页全选</label><button id="deleteSelected" class="danger" disabled>删除所选 (0)</button></div>
       </div>
-      <div id="expGrid" class="exp-grid"></div>
+      <div class="experiment-table-wrap"><table class="experiment-table"><thead><tr><th></th><th>实验名称</th><th>所有者 / 权限</th><th>计算资源</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="expGrid"></tbody></table></div>
       <div id="expPagination" class="exp-pagination" style="display:none;"></div>
 
     </div>
@@ -26,6 +28,7 @@
 
 <script src="/js/api.js"></script>
 <script src="/js/app.js"></script>
+<script src="/js/collaboration.js"></script>
 <script src="/js/chat.js"></script>
 <script>
 const PAGE_SIZE = 18;
@@ -35,8 +38,15 @@ let PAGE = 1;
 const SELECTED = new Set();
 let deleting = false;
 const canDelete = exp => exp.access_role !== 'collaborator' && (exp.user_id === ME?.id || ME?.role === 'admin');
+function filteredExperiments() {
+    const query = document.getElementById('experimentSearch').value.trim().toLowerCase();
+    const scope = document.getElementById('experimentScope').value, sort = document.getElementById('experimentSort').value;
+    return ALL_EXPS.filter(exp => `${exp.name} ${exp.owner_username || ''}`.toLowerCase().includes(query)
+        && (scope === 'all' || (scope === 'mine' ? exp.user_id === ME?.id : exp.access_role === 'collaborator')))
+        .sort((a, b) => sort === 'name' ? a.name.localeCompare(b.name) : sort === 'resources' ? b.total_count - a.total_count : b.created_at - a.created_at);
+}
 function updateSelection() {
-    const items = ALL_EXPS.slice((PAGE - 1) * PAGE_SIZE, PAGE * PAGE_SIZE).filter(canDelete);
+    const items = filteredExperiments().slice((PAGE - 1) * PAGE_SIZE, PAGE * PAGE_SIZE).filter(canDelete);
     const count = items.filter(exp => SELECTED.has(exp.id)).length;
     document.getElementById('selectPage').checked = items.length > 0 && count === items.length;
     document.getElementById('selectPage').indeterminate = count > 0 && count < items.length;
@@ -52,39 +62,23 @@ function renderCard(exp) {
     const isMine = ME && exp.user_id === ME.id;
     const isCollaborator = exp.access_role === 'collaborator';
     const canManage = !isCollaborator && (isMine || (ME && ME.role === 'admin'));
-    const showOwner = ME && (ME.role === 'admin' || !isMine);
-    const ownerLine = showOwner ? `<div>用户：<b>${escapeHtml(exp.owner_username || '-')}</b></div>` : '';
-    const initial = (exp.name || '?').trim().slice(0, 1).toUpperCase();
     return `
-      <div class="exp-card ${isCurrent ? 'current' : ''}">
-          <div class="exp-top">
-              ${canManage ? `<input type="checkbox" data-select="${exp.id}" aria-label="选择 ${escapeHtml(exp.name)}" ${SELECTED.has(exp.id) ? 'checked' : ''} ${deleting ? 'disabled' : ''} />` : ''}
-              <span class="exp-avatar">${escapeHtml(initial)}</span>
-              <div style="min-width:0;flex:1;">
-                  <div class="exp-name-row">
-                    <div class="name clickable" data-act="view" data-id="${exp.id}" title="${escapeHtml(exp.name)}">
-                      ${escapeHtml(exp.name)}
-                    </div>
-                    ${isCurrent ? '<span class="current-tag">当前</span>' : ''}${isCollaborator ? '<span class="collaborator-tag">协作</span>' : ''}
-                  </div>
-                  <div class="meta">
-                      ${ownerLine}
-                      <div>创建于 ${fmtTime(exp.created_at)}</div>
-                  </div>
-              </div>
-          </div>
-          <div class="counts">
+      <tr class="experiment-row ${isCurrent ? 'current' : ''}">
+          <td>${canManage ? `<input type="checkbox" data-select="${exp.id}" aria-label="选择 ${escapeHtml(exp.name)}" ${SELECTED.has(exp.id) ? 'checked' : ''} ${deleting ? 'disabled' : ''} />` : ''}</td>
+          <td><a class="experiment-name" href="/experiment_detail.html?id=${exp.id}">${icon('experiments')}<span>${escapeHtml(exp.name)}</span></a><small class="experiment-id">EXP-${String(exp.id).padStart(4, '0')} ${isCurrent ? '<span class="current-tag">当前</span>' : ''}</small></td>
+          <td><span>${escapeHtml(exp.owner_username || ME?.username || '-')}</span><small class="experiment-id">${isCollaborator ? '只读协作' : isMine ? '所有者' : '管理员'}</small></td>
+          <td><div class="experiment-resources">
               ${fmtCount('云', exp.cloud_count, 'badge-cloud')}
               ${fmtCount('边', exp.edge_count, 'badge-edge')}
               ${fmtCount('端', exp.device_count, 'badge-device')}
-              <span class="badge badge-blue">共 ${exp.total_count}</span>
-          </div>
-          <div class="actions">
-              <button class="view" data-act="view" data-id="${exp.id}">查看</button>
+          </div></td>
+          <td><time>${fmtTime(exp.created_at)}</time></td>
+          <td><div class="row-actions">
+              ${canManage ? `<button data-act="share" data-id="${exp.id}" data-name="${escapeHtml(exp.name)}">协作分享</button>` : ''}
               ${canManage ? `<button class="primary" data-act="enter" data-id="${exp.id}">${isCurrent ? '已进入' : '进入'}</button>` : ''}
               ${canManage ? `<button class="danger" data-act="del" data-id="${exp.id}" data-name="${escapeHtml(exp.name)}">删除</button>` : ''}
-          </div>
-      </div>`;
+          </div></td>
+      </tr>`;
 }
 
 function renderPagination(total) {
@@ -101,24 +95,26 @@ function renderPagination(total) {
 }
 
 function render() {
+    const filtered = filteredExperiments();
+    PAGE = Math.min(PAGE, Math.max(1, Math.ceil(filtered.length / PAGE_SIZE)));
     updateSelection();
     const grid = document.getElementById('expGrid');
     const hint = document.getElementById('expHint');
-    if (!ALL_EXPS.length) {
-        grid.innerHTML = `<div class="exp-empty"><div class="empty-state">
+    if (!filtered.length) {
+        grid.innerHTML = `<tr><td colspan="6"><div class="empty-state">
             <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6M10 3v6.5L5.2 18a2 2 0 0 0 1.8 3h10a2 2 0 0 0 1.8-3L14 9.5V3"/></svg>
-            <div class="t">暂无实验</div><div class="s">点击右上角「+ 新建实验」开启你的第一个实验环境。</div>
-        </div></div>`;
+            <div class="t">${ALL_EXPS.length ? '没有符合条件的实验' : '暂无实验'}</div>
+        </div></td></tr>`;
         hint.textContent = ME && ME.role === 'admin' ? '管理员视图：所有用户的实验' : '我的与协作实验';
         document.getElementById('expPagination').style.display = 'none';
         return;
     }
     hint.textContent = (ME && ME.role === 'admin' ? '管理员视图：所有用户的实验' : '我的与协作实验') + `（共 ${ALL_EXPS.length} 个）`;
-    const totalPages = Math.max(1, Math.ceil(ALL_EXPS.length / PAGE_SIZE));
+    const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
     if (PAGE > totalPages) PAGE = totalPages;
     const start = (PAGE - 1) * PAGE_SIZE;
-    grid.innerHTML = ALL_EXPS.slice(start, start + PAGE_SIZE).map(renderCard).join('');
-    renderPagination(ALL_EXPS.length);
+    grid.innerHTML = filtered.slice(start, start + PAGE_SIZE).map(renderCard).join('');
+    renderPagination(filtered.length);
 }
 
 async function loadExperiments() {
@@ -130,13 +126,14 @@ async function loadExperiments() {
         render();
     } catch (e) {
         document.getElementById('expGrid').innerHTML =
-            `<div class="exp-empty" style="color:var(--danger);padding:40px;text-align:center;">加载失败：${escapeHtml(e.message)}</div>`;
+            `<tr><td colspan="6" style="color:var(--danger);padding:40px;text-align:center;">加载失败：${escapeHtml(e.message)}</td></tr>`;
     }
 }
 
 document.getElementById('expGrid').addEventListener('click', async e => {
     const trigger = e.target.closest('[data-act]'); if (!trigger) return;
     const { act, id, name } = trigger.dataset;
+    if (act === 'share') { Collaboration.open(Number(id), name); return; }
     if (act === 'view') { window.location.href = '/experiment_detail.html?id=' + encodeURIComponent(id); return; }
     if (act === 'enter') {
         if (Number(id) === CURRENT_EXP_ID) return;
@@ -173,7 +170,7 @@ document.getElementById('expGrid').addEventListener('change', event => {
     updateSelection();
 });
 document.getElementById('selectPage').onchange = event => {
-    ALL_EXPS.slice((PAGE - 1) * PAGE_SIZE, PAGE * PAGE_SIZE).filter(canDelete).forEach(exp => {
+    filteredExperiments().slice((PAGE - 1) * PAGE_SIZE, PAGE * PAGE_SIZE).filter(canDelete).forEach(exp => {
         event.target.checked ? SELECTED.add(exp.id) : SELECTED.delete(exp.id);
     });
     render();
@@ -200,6 +197,9 @@ document.getElementById('deleteSelected').onclick = async () => {
 window.addEventListener('task:update', event => {
     if (event.detail?.kind === 'chat' && ['succeeded', 'failed'].includes(event.detail.status)) loadExperiments();
 });
+document.getElementById('experimentSearch').oninput = () => { PAGE = 1; render(); };
+document.getElementById('experimentScope').onchange = () => { PAGE = 1; render(); };
+document.getElementById('experimentSort').onchange = () => { PAGE = 1; render(); };
 
 (async () => {
     ME = await loadMe();

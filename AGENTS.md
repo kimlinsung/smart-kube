@@ -219,6 +219,35 @@ curl -fsSI http://cloudedgeiot.top/
 
 ### Project Lifecycle and Conversation
 
+- `frontend/js/collaboration.js` is the shared inline sharing dialog for the
+  workspace, experiment list and experiment detail. Opening it must not enter
+  an experiment or change the active conversation. Sharing still belongs to
+  the underlying experiment; reuse its owner/admin authorization checks.
+- `/api/experiments/<id>/collaborator-candidates?q=...` requires management
+  access, at least two characters and returns at most 12 id/name/username
+  records. Never expose the admin user directory, email, phone or auth fields.
+- `auth.validate_password` enforces 12-128 characters and all four character
+  classes for new user credentials and password changes. Preserve existing
+  custom credentials until explicitly changed. Feishu accounts get a random
+  48-character secret stored only as a hash, with local login disabled until
+  explicitly reset. Never return or log that generated secret.
+- Self-service password changes require the current password or a Feishu
+  callback verified within ten minutes; the latter proof is consumed on use.
+  `credential_version` invalidates older cookie sessions on subsequent auth
+  checks. Existing persistent connections are not forcibly terminated.
+- Old predictable Feishu placeholders are rejected by password login and
+  rotated on the next Feishu login, without resetting user-chosen passwords.
+- Board galleries serve WebP display assets and 240px WebP thumbnails. Keep
+  the source PNGs for future conversion, but never load them as thumbnails.
+  `backend/static_assets.py` gzip-compresses only bounded public JS/CSS assets,
+  with encoding-specific ETags. Do not compress authenticated API/file data.
+- Inventory pages use compact tables with filtering and pagination, not
+  overview-card grids. Batch select-all applies only to visible rows.
+  The resource overview animates actual allocated instances, not invented
+  utilization or throughput. Pause motion when hidden or reduced-motion is on.
+- Additional regressions: `tests/test_account_security.py` and
+  `node tests/console_collaboration.cjs` (mocked mutations only).
+
 - `backend/project_lifecycle.py` is the shared deletion service for REST and
   Agent tools. Preserve owner/admin checks; collaborators cannot delete.
 - Single and batch deletion remove compute, uploaded inputs, generated files,

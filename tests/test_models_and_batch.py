@@ -22,7 +22,7 @@ class ModelAndBatchApiTest(unittest.TestCase):
             self.app = create_app()
         self.app.config.update(TESTING=True)
         self.client = self.app.test_client()
-        self.user, _ = auth.create_user("owner", "secret123")
+        self.user, _ = auth.create_user("owner", "Te5t!Fixture_2026")
         with self.client.session_transaction() as session:
             session["user_id"] = self.user["id"]
         self.providers = {"test": {"api_base": "https://model.invalid/v1", "api_key": "private-test-key", "models": ["model-a", "model-b"]}}
@@ -44,7 +44,7 @@ class ModelAndBatchApiTest(unittest.TestCase):
     def test_preference_persists_and_is_user_specific(self):
         self.assertEqual(self.client.put("/api/me/model", json={"llm_profile": "test:model-b"}).status_code, 200)
         self.assertEqual(self.client.get("/api/me").json["llm_profile"], "test:model-b")
-        other, _ = auth.create_user("other", "secret123")
+        other, _ = auth.create_user("other", "Te5t!Fixture_2026")
         with self.client.session_transaction() as session:
             session["user_id"] = other["id"]
         self.assertEqual(self.client.get("/api/models").json["selected"], "default")

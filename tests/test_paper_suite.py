@@ -17,7 +17,7 @@ class SuiteTest(unittest.TestCase):
         patch = mock.patch('backend.db.DB_PATH', os.path.join(self.temp.name, 'state.db'))
         patch.start(); self.addCleanup(patch.stop)
         db.init_db()
-        self.user, _ = auth.create_user('suite-owner', 'secret123')
+        self.user, _ = auth.create_user('suite-owner', 'Te5t!Fixture_2026')
         self.exp = db.create_experiment(self.user['id'], 'suite')
         self.workspace = db.create_paper_workspace(self.user['id'], self.exp['id'], 'suite', 'compare', 'full', {})
         self.task = db.create_execution_task(self.user['id'], self.exp['id'], 'paper', 'suite')
@@ -129,7 +129,7 @@ class SuiteTest(unittest.TestCase):
         self.assertEqual(client.get(url).data,b'# Process')
         self.assertEqual(client.get(url+'?kind=comparison').data,b'# Comparison')
         self.assertEqual(client.get(url+'?kind=unknown').status_code,400)
-        other,_=auth.create_user('foreign-reader','secret123')
+        other,_=auth.create_user('foreign-reader','Te5t!Fixture_2026')
         with client.session_transaction() as session:
             session['user_id']=other['id']
         self.assertEqual(client.get(url+'?kind=comparison').status_code,404)

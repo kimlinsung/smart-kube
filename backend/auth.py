@@ -1,5 +1,7 @@
 """认证与权限：用户 CRUD、密码 hash、登录、session 鉴权装饰器。"""
 import time
+import secrets
+import string
 from functools import wraps
 from typing import Optional
 
@@ -33,6 +35,9 @@ def ensure_admin():
 def create_user(username, password, role="user"):
     if not username or not password:
         return None, "用户名/密码不能为空"
+    error = validate_password(password, username)
+    if error:
+        return None, error
     with db.cursor() as cur:
         cur.execute("SELECT id FROM users WHERE username=?", (username,))
         if cur.fetchone():
@@ -57,16 +62,45 @@ def list_users():
         return [dict(r) for r in cur.fetchall()]
 
 
+def validate_password(password, username="") -> Optional[str]:
+    if not isinstance(password, str) or not 12 <= len(password) <= 128:
+        return "密码需为 12–128 位，包含大写字母、小写字母、数字和符号"
+    if any(ch.isspace() or not ch.isprintable() for ch in password):
+        return "密码不能包含空白或控制字符"
+    if not all(any(ch in group for ch in password) for group in (
+        string.ascii_uppercase, string.ascii_lowercase, string.digits, string.punctuation,
+    )):
+        return "密码必须同时包含大写字母、小写字母、数字和符号"
+    if len(set(password)) < 8 or any(word in password.casefold() for word in (
+        "password", "qwerty", "123456", "admin123", "letmein",
+    )):
+        return "密码过于常见或重复，请使用更难猜测的组合"
+    if len(username) >= 3 and username.casefold() in password.casefold():
+        return "密码不能包含用户名"
+    return None
+
+
+def random_password() -> str:
+    alphabet = string.ascii_letters + string.digits + string.punctuation
+    while True:
+        password = "".join(secrets.choice(alphabet) for _ in range(48))
+        if validate_password(password) is None:
+            return password
+
+
 def change_password(user_id: int, new_password: str) -> Optional[str]:
     """更新指定用户的密码，返回错误字符串或 None（成功）。"""
-    if not new_password or len(new_password) < 6:
-        return "密码长度不能少于 6 位"
     with db.cursor() as cur:
-        cur.execute("SELECT id FROM users WHERE id=?", (user_id,))
-        if not cur.fetchone():
+        cur.execute("SELECT id, username FROM users WHERE id=?", (user_id,))
+        user = cur.fetchone()
+        if not user:
             return "用户不存在"
+        error = validate_password(new_password, user["username"])
+        if error:
+            return error
         cur.execute(
-            "UPDATE users SET password_hash=? WHERE id=?",
+            "UPDATE users SET password_hash=?, password_generated=0, "
+            "credential_version=credential_version+1 WHERE id=?",
             (generate_password_hash(new_password), user_id),
         )
     return None
@@ -101,12 +135,19 @@ def set_role(user_id: int, role: str) -> Optional[str]:
 
 
 def authenticate(username, password):
+    if not isinstance(username, str) or not isinstance(password, str) or len(password) > 128:
+        return None
     with db.cursor() as cur:
         cur.execute("SELECT * FROM users WHERE username=?", (username,))
         row = cur.fetchone()
     if not row:
         return None
     user = dict(row)
+    # Never accept the predictable placeholder used by older Feishu accounts.
+    if user.get("password_generated") or (
+        user.get("feishu_open_id") and password == "!feishu-no-password!" + user["feishu_open_id"]
+    ):
+        return None
     if check_password_hash(user["password_hash"], password):
         return user
     return None
@@ -118,7 +159,7 @@ def current_user():
         return None
     with db.cursor() as cur:
         cur.execute(
-            "SELECT id, username, role, created_at, llm_profile, "
+            "SELECT id, username, role, created_at, llm_profile, password_generated, credential_version, "
             "name, en_name, email, enterprise_email, mobile, "
             "avatar_url, avatar_big, "
             "feishu_open_id, feishu_union_id, tenant_key "
@@ -126,7 +167,11 @@ def current_user():
             (uid,),
         )
         row = cur.fetchone()
-    return dict(row) if row else None
+    if not row or row["credential_version"] != session.get("credential_version", 0):
+        return None
+    user = dict(row)
+    user.pop("credential_version")
+    return user
 
 
 def upsert_feishu_user(info: dict) -> dict:
@@ -160,6 +205,14 @@ def upsert_feishu_user(info: dict) -> dict:
         cur.execute("SELECT * FROM users WHERE feishu_open_id=?", (open_id,))
         row = cur.fetchone()
         if row:
+            if not row["password_generated"] and check_password_hash(
+                row["password_hash"], "!feishu-no-password!" + open_id
+            ):
+                cur.execute(
+                    "UPDATE users SET password_hash=?, password_generated=1, "
+                    "credential_version=credential_version+1 WHERE id=?",
+                    (generate_password_hash(random_password()), row["id"]),
+                )
             cur.execute(
                 "UPDATE users SET feishu_union_id=?, name=?, en_name=?, "
                 "email=?, enterprise_email=?, mobile=?, "
@@ -181,14 +234,14 @@ def upsert_feishu_user(info: dict) -> dict:
             i += 1
             username = f"{base}_{i}"
 
-        # 飞书登录用户没有本地密码，写一个不可登录的占位 hash
-        placeholder_pwd = generate_password_hash("!feishu-no-password!" + open_id)
+        # Keep only a hash; generated credentials are never returned or logged.
+        placeholder_pwd = generate_password_hash(random_password())
         cur.execute(
             "INSERT INTO users(username, password_hash, role, created_at, "
             "feishu_open_id, feishu_union_id, tenant_key, "
             "name, en_name, email, enterprise_email, mobile, "
-            "avatar_url, avatar_big) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "avatar_url, avatar_big, password_generated) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
             (username, placeholder_pwd, default_role, int(time.time()),
              open_id, union_id, tenant,
              name, en_name, email, ent_email, mobile,

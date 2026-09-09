@@ -407,7 +407,7 @@
         const canManageSharing = ['owner', 'admin'].includes(workspace.access_role || 'owner');
         const canOperate = workspace.user_id === ME?.id || (workspace.access_role || 'owner') === 'owner';
         $('#manageSharing').hidden = !canManageSharing;
-        $('#manageSharing').href = `/experiment_detail.html?id=${workspace.experiment_id}#sharing`;
+        $('#manageSharing').onclick = () => Collaboration.open(workspace.experiment_id, workspace.name);
         $('#retryAnalysis').hidden = !canOperate || workspace.mode !== 'full' || ACTIVE.has(workspace.status);
         $('#reclaimResources').hidden = !canOperate || ACTIVE.has(workspace.status) || workspace.resources_reclaimed || !(workspace.schedule_json?.created > 0);
         $('#deleteWorkspace').hidden = !canManageSharing;

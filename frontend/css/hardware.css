@@ -4,8 +4,8 @@
 .hardware-heading span { font-size:10px; color:#759384; }.hardware-heading h2 { font-size:26px; margin:10px 0; font-weight:600; }
 .hardware-heading>a { font-size:12px; color:#437960; text-decoration:none; white-space:nowrap; }
 .hardware-stage { display:grid; grid-template-columns:1.4fr 1fr; align-items:center; margin:24px 0; background:#f2f5f3; }
-.hardware-object { height:360px; position:relative; display:grid; place-items:center; overflow:hidden; }
-.hardware-object img { width:80%; height:90%; object-fit:contain; transition:transform .2s ease-out; filter:drop-shadow(0 18px 15px #18322520); }
+.hardware-object { height:360px; position:relative; display:grid; grid-template: minmax(0,1fr) / minmax(0,1fr); place-items:center; overflow:hidden; }
+.hardware-object img { width:80%; height:90%; min-height:0; min-width:0; object-fit:contain; transition:transform .2s ease-out; filter:drop-shadow(0 18px 15px #18322520); }
 .hardware-index { position:absolute; left:24px; bottom:18px; color:#8a9c93; font:11px ui-monospace,monospace; }
 .hardware-spec { padding:30px 40px; border-left:1px solid #dce6df; }.hardware-chip { font-size:10px; color:#5c806e; }.hardware-spec h3 { font-size:29px; margin:14px 0; font-weight:550; overflow-wrap:anywhere; }.hardware-spec p { font-size:14px; color:#748e80; }
 .hardware-spec dl { margin:25px 0; border-top:1px solid #dbe5df; }.hardware-spec dl>div { padding-top:12px; }.hardware-spec dt { font-size:9px; color:#97a79e; }.hardware-spec dd { margin:3px 0 0; font-size:12px; color:#496553; }.hardware-spec>a { font-size:12px; color:#357955; }.hardware-spec>small { display:block; font-size:10px; color:#97a69c; margin-top:18px; line-height:1.7; }

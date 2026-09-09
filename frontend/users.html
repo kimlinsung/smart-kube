@@ -24,7 +24,7 @@
           <div class="form-row">
             <span class="label">新建用户</span>
             <input id="nu" placeholder="用户名" autocomplete="off" />
-            <input id="np" placeholder="密码（至少 6 位）" type="password" autocomplete="new-password" />
+            <input id="np" placeholder="12–128 位，大小写字母、数字和符号" type="password" autocomplete="new-password" minlength="12" maxlength="128" />
             <select id="nr" aria-label="用户角色"><option value="user">普通用户</option><option value="admin">管理员</option></select>
             <button id="createUser" class="primary btn-sm">创建</button>
           </div>
@@ -127,10 +127,8 @@ document.getElementById('usersBody').addEventListener('click', async e => {
         if (!confirm(`删除用户 ${name}？`)) return;
         try { await API.adminDeleteUser(id); loadUsers(); } catch (err) { alert(err.message); }
     } else if (act === 'pwd') {
-        const newPwd = prompt(`为用户 "${name}" 设置新密码（至少 6 位）：`);
-        if (newPwd === null) return;
-        if (newPwd.length < 6) { alert('密码长度不能少于 6 位'); return; }
-        try { await API.adminChangePassword(id, newPwd); alert('密码已修改'); } catch (err) { alert(err.message); }
+        const {openAccountSecurity} = await import('/js/account_security.js');
+        openAccountSecurity({id, name});
     } else if (act === 'role') {
         const tip = role === 'admin' ? `将用户 "${name}" 设为管理员？` : `将管理员 "${name}" 降为普通用户？`;
         if (!confirm(tip)) return;
@@ -143,7 +141,7 @@ document.getElementById('createUser').onclick = async () => {
     const password = document.getElementById('np').value;
     const role = document.getElementById('nr').value;
     if (!username || !password) return alert('用户名/密码不能为空');
-    if (password.length < 6) return alert('密码长度不能少于 6 位');
+    if (password.length < 12) return alert('密码长度不能少于 12 位');
     try {
         await API.adminCreateUser(username, password, role);
         document.getElementById('nu').value = '';

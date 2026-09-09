@@ -37,7 +37,7 @@ class ExecutionTaskPersistenceTest(TemporaryDatabaseTest):
         self.assertEqual(restored["events"][-1]["event_type"], "interrupted")
 
     def test_script_job_persists_stages_and_result(self):
-        user, error = auth.create_user("runner", "secret123")
+        user, error = auth.create_user("runner", "Te5t!Fixture_2026")
         self.assertIsNone(error)
         path = os.path.join(self.temp_dir.name, "hello.py")
         with open(path, "w", encoding="utf-8") as handle:
@@ -69,7 +69,7 @@ class ExecutionTaskPersistenceTest(TemporaryDatabaseTest):
             self.assertEqual(cur.fetchone()["source_ip"], "203.0.113.8")
 
     def test_chat_job_persists_progress_and_completed_reply(self):
-        user, error = auth.create_user("chat-runner", "secret123")
+        user, error = auth.create_user("chat-runner", "Te5t!Fixture_2026")
         self.assertIsNone(error)
         task = db.create_execution_task(user["id"], 12, "chat", "创建测试资源")
 

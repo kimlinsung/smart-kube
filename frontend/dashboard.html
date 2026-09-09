@@ -13,13 +13,14 @@
     <header class="topbar" id="topbar"></header>
     <div class="content">
 
-      <div class="stats" id="cluster">
-        <div class="stat-tile"><div class="st-body"><div class="st-value"><span class="spinner"></span></div><div class="st-label">加载集群概览…</div></div></div>
-      </div>
+      <section class="resource-overview" id="resourceOverview" aria-label="我的资源概览">
+        <header><div><span class="dialog-eyebrow">MY RESEARCH / OVERVIEW</span><h1>研究资源概览</h1></div><a href="/paper_workspace.html">论文工作区 ↗</a></header>
+        <div class="resource-overview-body"><div class="resource-map"><div class="resource-overview-totals" aria-live="polite"><span><b id="overviewTotal">—</b> 已分配实例</span><span><i class="status-dot running"></i>运行中 <b id="overviewRunning">—</b></span><span><i class="status-dot attention"></i>需关注 <b id="overviewAttention">—</b></span></div><canvas id="resourceCanvas" role="img" aria-label="资源层级分布"></canvas><div class="resource-map-footer"><span id="resourceDistribution">正在读取资源…</span><button type="button" id="resourceMotion" class="icon-btn" aria-label="暂停资源动效" title="暂停资源动效" aria-pressed="false">Ⅱ</button></div></div><div class="research-activity"><header><h2>研究进展</h2><a href="/experiments.html">全部实验 ↗</a></header><div id="researchTotals">正在读取实验…</div><div id="recentWork">正在读取工作…</div></div></div>
+      </section>
 
       <div class="card">
         <div class="card-head">
-          <h2><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5 9 5 9-5zM3 8v8l9 5 9-5V8"/></svg>我的 Units / 容器</h2>
+          <h2><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5 9 5 9-5zM3 8v8l9 5 9-5V8"/></svg>计算实例</h2>
           <div class="right">
             <span class="badge badge-blue" id="podCount">—</span>
             <button id="refresh" class="btn-sm btn-ghost">刷新</button>
@@ -43,30 +44,10 @@
 
 <script src="/js/api.js"></script>
 <script src="/js/app.js"></script>
+<script src="/js/resource_overview.js"></script>
 <script src="/js/chat.js"></script>
 <script>
 let CURRENT_POD_FOR_UPLOAD = null;
-
-function statTile(cls, ico, value, label) {
-    return `<div class="stat-tile">
-        <span class="stat-ico ${cls}">${ico}</span>
-        <div class="st-body"><div class="st-value">${value}</div><div class="st-label">${label}</div></div>
-    </div>`;
-}
-
-async function loadCluster() {
-    const el = document.getElementById('cluster');
-    try {
-        const c = await API.clusterInfo();
-        el.innerHTML =
-            statTile('blue', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L3 7v6c0 5 4 8 9 9 5-1 9-4 9-9V7l-9-5z"/></svg>', escapeHtml(c.version), '集群版本') +
-            statTile('cloud', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/></svg>', c.node_count, '节点总数') +
-            statTile('green', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>', c.ready_nodes, '就绪节点') +
-            statTile('edge', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v6H4zM4 14h16v6H4z"/></svg>', escapeHtml(c.namespace), '命名空间');
-    } catch (e) {
-        el.innerHTML = statTile('device', '!', '—', '集群概览加载失败：' + escapeHtml(e.message));
-    }
-}
 
 function renderPodRow(p) {
     const sshInfo = p.ssh_port
@@ -93,6 +74,7 @@ async function loadPods(silent = false) {
     if (!silent) body.innerHTML = '<tr class="loading-row"><td colspan="9"><span class="spinner"></span> 加载中…</td></tr>';
     try {
         const r = await API.listResources();
+        ResourceOverview.update(r.pods);
         document.getElementById('podCount').textContent = (r.pods.length || 0) + ' 个';
         if (!r.pods.length) {
             body.innerHTML = `<tr><td colspan="9"><div class="empty-state">
@@ -110,6 +92,7 @@ async function loadPods(silent = false) {
         bindPhaseHover(body);
         batchSelection.refresh();
     } catch (e) {
+        ResourceOverview.error(e.message);
         if (!silent) body.innerHTML = `<tr><td colspan="9" style="color:var(--danger)">加载失败：${escapeHtml(e.message)}</td></tr>`;
     }
 }
@@ -140,9 +123,14 @@ document.getElementById('refresh').onclick = () => loadPods(true);
 window.addEventListener('chat:done', () => loadPods(true));
 
 (async () => {
-    await loadMe();
-    await loadCluster();
-    await loadPods();
+    const me = await loadMe();
+    if (!me) return;
+    ResourceOverview.loadResearch();
+    loadPods();
+    if (new URLSearchParams(location.search).get('security') === '1') {
+        const {openAccountSecurity} = await import('/js/account_security.js');
+        openAccountSecurity(); history.replaceState(null, '', '/dashboard.html');
+    }
     startPolling(() => loadPods(true), 15000);
 })();
 </script>

@@ -195,6 +195,11 @@ function toggleUserMenu(btn, me) {
     }
     _userMenu.innerHTML = renderUserMenu(me);
     const lo = _userMenu.querySelector('#menuLogout');
+    _userMenu.querySelector('#menuSecurity').onclick = async () => {
+        _userMenu.classList.remove('open');
+        const {openAccountSecurity} = await import('/js/account_security.js');
+        openAccountSecurity();
+    };
     if (lo) lo.onclick = async () => { await API.logout(); window.location.href = '/login.html'; };
     _userMenu.classList.add('open');
     // 定位在用户按钮上方
@@ -233,6 +238,7 @@ function renderUserMenu(me) {
             ${rows.map(([k, v]) => `<div class="user-menu-row"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('')}
         </div>
         <div class="user-menu-foot">
+            <button id="menuSecurity" type="button">账户安全</button>
             <button class="danger" id="menuLogout">${icon('logout')}<span>退出登录</span></button>
         </div>`;
 }
@@ -321,7 +327,7 @@ function enableResourceSelection(bodyId, reload) {
     const result = bar.querySelector('.batch-result');
     const checkboxes = () => [...body.querySelectorAll('input[data-resource-select]')];
     function update() {
-        const boxes = checkboxes();
+        const boxes = checkboxes().filter(box => !box.closest('tr').hidden);
         all.checked = boxes.length > 0 && boxes.every(box => selected.has(box.value));
         all.indeterminate = boxes.some(box => selected.has(box.value)) && !all.checked;
         all.disabled = busy || !boxes.length;
@@ -357,7 +363,8 @@ function enableResourceSelection(bodyId, reload) {
         bar.hidden = !names.size && !result.textContent;
         update();
     }
-    all.onchange = () => { checkboxes().forEach(box => all.checked ? selected.add(box.value) : selected.delete(box.value)); update(); };
+    all.onchange = () => { checkboxes().filter(box => !box.closest('tr').hidden).forEach(box => all.checked ? selected.add(box.value) : selected.delete(box.value)); update(); };
+    body.addEventListener('resource:visibility', update);
     remove.onclick = async () => {
         const names = [...selected];
         if (busy || !names.length || !confirm(`确认删除所选的 ${names.length} 个资源及其 SSH 服务？\n\n${names.join('\n')}`)) return;

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+import time
 from urllib.parse import urlparse, urlunparse
 
 from flask import Blueprint, jsonify, redirect, request, session, url_for
@@ -93,7 +94,7 @@ def callback():
         token_data = feishu.exchange_user_access_token(code)
         user_access_token = token_data.get("access_token")
         if not user_access_token:
-            return _fail(f"飞书未返回 access_token：{token_data}")
+            return _fail("飞书未返回有效的登录凭据")
         user_info = feishu.fetch_user_info(user_access_token)
     except Exception as e:
         log.exception("飞书 OAuth 失败")
@@ -103,9 +104,12 @@ def callback():
     user = auth.upsert_feishu_user(user_info)
 
     # 复用现有 session 机制：set user_id 即视为已登录
+    next_url = session.pop("feishu_oauth_next", "/dashboard.html") or "/dashboard.html"
     session.clear()
     session["user_id"] = user["id"]
+    session["credential_version"] = user["credential_version"]
     session["login_via"] = "feishu"
+    session["feishu_verified_at"] = time.time()
     session["current_experiment_id"] = db.ensure_default_experiment(user["id"])
 
     audit.log(
@@ -113,9 +117,8 @@ def callback():
         f"open_id={user.get('feishu_open_id','')} name={user.get('name','')}",
     )
 
-    next_url = session.pop("feishu_oauth_next", "/dashboard.html") or "/dashboard.html"
     # 防止 open redirect：只允许同站相对路径
-    if not next_url.startswith("/") or next_url.startswith("//"):
+    if not next_url.startswith("/") or next_url.startswith("//") or "\\" in next_url or any(ord(c) < 32 for c in next_url):
         next_url = "/dashboard.html"
     return redirect(next_url)
 

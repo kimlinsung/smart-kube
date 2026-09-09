@@ -22,6 +22,9 @@ const pods=nodes.map((n,i)=>({...n,name:'unit-'+i,node:n.name,owner_username:'re
    for(const name of ['welcome','devices']){
     await page.goto(base+'/'+name+'.html');
     await page.waitForFunction(()=>document.querySelector('.hardware-object img')?.naturalWidth>0);
+    assert(await page.locator('.hardware-object').evaluate(el=>{const box=el.getBoundingClientRect(),img=el.querySelector('img').getBoundingClientRect();return img.top>=box.top&&img.bottom<=box.bottom;}),'Clipped board photograph');
+    assert.match(await page.locator('.hardware-object img').getAttribute('src'),/\.webp$/);
+    assert.match(await page.locator('.hardware-thumbnails img').first().getAttribute('src'),/-thumb\.webp$/);
     await page.locator('[data-board="2"]').click();
     assert.equal(await page.locator('.hardware-spec h3').innerText(),'Milk-V Meles');
     await page.locator('[data-board="0"]').click();
@@ -35,16 +38,18 @@ const pods=nodes.map((n,i)=>({...n,name:'unit-'+i,node:n.name,owner_username:'re
    }
    for(const name of ['admin','all_units']){
     await page.goto(base+'/'+name+'.html');
-    await page.waitForSelector('.inventory-metrics b');
+    await page.waitForFunction(()=>document.querySelector('[data-status="all"] span')?.textContent==='2');
     assert.equal(await page.locator('.sidebar-brand').getAttribute('href'),'/welcome.html');
-    await page.locator('[data-mode="grid"]').click();
-    assert.equal(await page.locator('.inventory-item').count(),2);
-    await page.locator('.inventory-toolbar select').selectOption('cloud');
-    assert.equal(await page.locator('.inventory-item').count(),1);
+    assert.equal(await page.locator('.inventory-metrics, .inventory-grid').count(),0);
+    await page.locator('[data-tier]').selectOption('cloud');
+    assert.equal(await page.locator('tbody tr:visible').count(),1);
     await page.locator('.inventory-toolbar input').fill('no-such-node');
-    assert.equal(await page.locator('.inventory-item').count(),0);
+    assert.equal(await page.locator('tbody tr:not(.filter-empty):visible').count(),0);
     await page.locator('.inventory-toolbar input').fill('');
-    await page.locator('.inventory-toolbar select').selectOption('');
+    await page.locator('[data-tier]').selectOption('');
+    await page.locator('[data-status="attention"]').click();
+    assert.equal(await page.locator('tbody tr:visible').count(),1);
+    await page.locator('[data-status="all"]').click();
     await page.locator('#topbar .model-menu summary').click();
     await page.locator('#topbar [data-model-id="b"]').click();
     assert.match(await page.locator('#topbar .model-current b').innerText(),/model B/);
@@ -52,6 +57,7 @@ const pods=nodes.map((n,i)=>({...n,name:'unit-'+i,node:n.name,owner_username:'re
     await page.locator('#userBtn').click();
     const button=await page.locator('#menuLogout').boundingBox();
     assert(button.height<=36&&button.width<160,'Oversized logout');
+    assert(await page.locator('#menuLogout span').evaluate(el=>el.scrollHeight<=24),'Wrapped logout text');
     await page.locator('#userBtn').click();
     if(width<900)await page.locator('.sidebar-backdrop').click({position:{x:width-10,y:100}});
     await page.evaluate(()=>scrollTo(0,0));
@@ -60,6 +66,23 @@ const pods=nodes.map((n,i)=>({...n,name:'unit-'+i,node:n.name,owner_username:'re
    }
    assert.deepEqual(errors,[]);await page.close();
   }
-  console.log('PASS: hardware assets and switching, testbed branding, inventory views/filters, model menu, home link, compact logout, responsive layout');console.log('SCREENSHOTS '+output);
+  const paged=await browser.newPage({viewport:{width:1440,height:950}});
+  await paged.route('**/api/**',route=>{
+   const path=new URL(route.request().url()).pathname;
+   const json=path==='/api/me'?{id:1,username:'researcher',role:'admin'}:path==='/api/models'?{models:[],selected:'default'}:path==='/api/admin/pods'?{pods:Array.from({length:25},(_,i)=>({...pods[0],name:'unit-'+String(i).padStart(2,'0')}))}:{};
+   return route.fulfill({json});
+  });
+  await paged.goto(base+'/all_units.html');
+  await paged.waitForFunction(()=>document.querySelector('[data-status="all"] span')?.textContent==='25');
+  assert.equal(await paged.locator('tbody tr:visible').count(),20);
+  await paged.locator('[aria-label="全选资源"]').check();
+  assert.equal(await paged.locator('[data-resource-select]:checked').count(),20);
+  await paged.locator('[data-next]').click();
+  assert.equal(await paged.locator('tbody tr:visible').count(),5);
+  assert.equal(await paged.locator('tbody tr:visible [data-resource-select]:checked').count(),0);
+  await paged.locator('[aria-label="全选资源"]').check();
+  assert.equal(await paged.locator('[data-resource-select]:checked').count(),25);
+  await paged.close();
+  console.log('PASS: WebP assets and framing, testbed branding, inventory filters/pagination/visible selection, model menu, home link, compact logout, responsive layout');console.log('SCREENSHOTS '+output);
  }finally{await browser.close()}
 })().catch(error=>{console.error(error);process.exit(1)});

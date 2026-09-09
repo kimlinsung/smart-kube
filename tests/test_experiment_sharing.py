@@ -20,9 +20,9 @@ class ExperimentSharingTest(unittest.TestCase):
         ):
             self.app = create_app()
         self.app.config.update(TESTING=True)
-        self.owner, _ = auth.create_user("paper-owner", "secret123")
-        self.collaborator, _ = auth.create_user("paper-reader", "secret123")
-        self.stranger, _ = auth.create_user("paper-stranger", "secret123")
+        self.owner, _ = auth.create_user("paper-owner", "Te5t!Fixture_2026")
+        self.collaborator, _ = auth.create_user("paper-reader", "Te5t!Fixture_2026")
+        self.stranger, _ = auth.create_user("paper-stranger", "Te5t!Fixture_2026")
         self.experiment = db.create_experiment(self.owner["id"], "共享时延实验", "真实执行证据")
         self.workspace = db.create_paper_workspace(
             self.owner["id"], self.experiment["id"], "共享时延实验", "比较两个节点耗时", "full", {}
