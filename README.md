@@ -1,216 +1,189 @@
-# Smart-Kube — 自然语言驱动的管理平台
+<div align="center">
 
-通过 **LangGraph + Kubernetes 原生 API** 让用户用一句话完成 Pod / SSH 容器 / Python 代码执行 / 节点管理等所有操作；自带 Web Shell、文件上传、操作审计；前后端一体，单机即可部署。
+<a href="https://cloudedgeiot.top/welcome.html"><img src="docs/assets/smart-kube-cover.png" alt="Smart-Kube · 端边云论文复现实验平台" width="100%"></a>
 
+# Smart-Kube
+
+### 从论文到程序，从算力到证据。
+
+面向端边云研究的多 Agent 论文复现与 Kubernetes 实验工作区。
+
+[**简体中文**](README.md) · [English](README.en.md)
+
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](requirements.txt)
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-native-326CE5?style=flat-square&logo=kubernetes&logoColor=white)](backend/k8s_client.py)
+[![LangGraph](https://img.shields.io/badge/Agents-LangGraph-087B68?style=flat-square)](backend/agent.py)
+[![Three.js](https://img.shields.io/badge/3D-Three.js-252D29?style=flat-square&logo=threedotjs&logoColor=white)](frontend/js/welcome_scene.js)
+[![Workspace](https://img.shields.io/badge/Workspace-persistent-C58C65?style=flat-square)](backend/paper_jobs.py)
+
+[**探索交互式首页 ↗**](https://cloudedgeiot.top/welcome.html) · [快速开始](#快速开始) · [系统架构](#系统架构) · [参与贡献](CONTRIBUTING.md)
+
+</div>
+
+---
+
+## 把研究的每一步连接起来
+
+Smart-Kube 将论文材料、配置规划、Kubernetes 资源调度、代码生成和真实执行证据，连接到同一个持久化实验工作区。自然语言资源管理、浏览器终端、文件传输、实验协作与操作审计，共同支撑完整的实验过程。
+
+我们关注的是**可追溯的复现过程**。程序运行成功，并不等于论文中的科学结论已经完整复现。
+
+<a href="https://cloudedgeiot.top/welcome.html"><img src="docs/assets/compute-demo.gif" alt="真实首页录屏：点选端、边、云设备的 Three.js 交互场景" width="100%"></a>
+
+<table>
+<tr>
+<td width="33%" valign="top">
+
+### 🟧 端 · Device
+感知、数据采集与实验输入。
+
+**研究角色**
+端侧工作负载与观测。
+
+</td>
+<td width="33%" valign="top">
+
+### 🟩 边 · Edge
+面向近端任务的异构计算。
+
+**研究角色**
+协同推理与任务分配。
+
+</td>
+<td width="33%" valign="top">
+
+### 🟦 云 · Cloud
+x86 与可用 GPU 节点上的集中计算。
+
+**研究角色**
+计算密集型实验工作负载。
+
+</td>
+</tr>
+</table>
+
+场景为架构概念演示。实际调度取决于集群节点、镜像、驱动与可用资源；设备清单中的硬件不一定都是已加入 Kubernetes 的工作节点。
+
+## 七个阶段，一条证据链
+
+<img src="docs/assets/workflow-demo.gif" alt="七阶段 Agent 工作流：文档理解、配置规划、资源调度、代码生成、真实执行、证据分析、报告归档" width="100%">
+
+| 阶段 | 负责什么 | 保留什么 |
+| :--- | :--- | :--- |
+| **01 · 文档理解** | 提取实验目标、方法、验收依据与假设。 | 文档证据、实验范围 |
+| **02 · 配置规划** | 结合正文与集群实时快照形成方案；预检失败后携带诊断重新规划。 | 候选配置、预检诊断 |
+| **03 · 资源调度** | 选择满足条件的节点；必要时尝试其他节点类型。 | 资源实例、节点落位、回退记录 |
+| **04 · 代码生成** | 全部资源创建与落位请求成功后，生成 Python 程序和逐 Unit 运行计划。 | 可下载代码、运行参数 |
+| **05 · 真实执行** | 等待容器就绪，上传代码并执行。 | stdout、stderr、退出状态、实际耗时 |
+| **06 · 证据分析** | 对照真实输出检查结果，记录差距与风险。 | 检查项、局限、后续建议 |
+| **07 · 报告归档** | 汇总过程与执行证据，形成持久化实验记录。 | Markdown 报告、完整产物 |
+
+**两种执行模式：** 可以止于资源调度并生成报告，也可以继续代码生成、执行与分析。仅回收计算资源会保留实验产物；删除工作区会清理资源、上传与生成文件、记录和关联实验。
+
+> 预检快照不等于资源预留，最终准入与调度由 Kubernetes 决定。架构、GPU 和明确指定的主机属于硬约束；节点类型的放宽会被记录。落位后仍可能遇到镜像拉取或运行时就绪失败。
+
+## 为持续实验而构建
+
+| 能力 | 实际体验 |
+| :--- | :--- |
+| **持久化工作区** | 输入、配置、代码、事件、运行输出和报告关联到同一个实验。 |
+| **自然语言运维** | LangGraph 工具调用 Agent 按用户权限操作 Kubernetes 资源。 |
+| **浏览器执行** | Web Shell、脚本上传与容器内执行，减少实验操作切换。 |
+| **多模型选择** | 选择已配置的服务与模型；后台任务使用提交时选定的模型。 |
+| **实验协作** | 协作者查看、可撤销分享链接，以及操作与凭据边界。 |
+| **轻量化读取** | 实验 Pod 数量批量聚合，工作区摘要与状态单独加载，审计日志分页读取。 |
+
+## 系统架构
+
+```mermaid
+flowchart LR
+    UI["浏览器<br/>工作区 · Web Shell · Three.js"] -->|HTTP / WebSocket| APP["Flask + Flask-Sock"]
+    APP --> CHAT["LangGraph<br/>对话 Agent"]
+    APP --> PAPER["论文工作流<br/>专职 Agent"]
+    CHAT --> SDK["Kubernetes Python SDK"]
+    PAPER --> SDK
+    SDK --> K8S["Kubernetes<br/>符合条件的集群节点"]
+    APP --> STATE[("SQLite + 本地产物")]
+    PAPER --> STATE
+    classDef app fill:#EAF4EE,stroke:#087B68,color:#173D2B
+    classDef compute fill:#EDF2F8,stroke:#5279AA,color:#243F65
+    classDef state fill:#FAF0E8,stroke:#C58C65,color:#6B4730
+    class UI,APP,CHAT,PAPER app
+    class SDK,K8S compute
+    class STATE state
 ```
-浏览器  ──HTTP/WS──▶  Flask + Flask-Sock  ──Python K8s SDK──▶  K8s control-plane
-                       └─ LangGraph Agent (LLM 工具调用)
-```
 
-## 项目结构
+对话 Agent 与论文工作流是两条编排路径，共用服务端授权与 Kubernetes 操作封装。当前应用为**单实例架构**：SQLite、本地文件和后台任务由一个活动实例管理。扩展多副本需要同时改造持久化、文件存储与任务协调。
 
-```
-smart-kube/
-├── config.yaml              全局配置（含密钥，已 .gitignore，不进 git；每台机器本地维护）
-├── config.yaml.example      配置模板（占位符，进 git；`cp config.yaml.example config.yaml` 后填真实值）
-├── requirements.txt
-├── run.sh                   一键启动脚本（建 venv → 装依赖 → 起服务）
-├── backend/
-│   ├── app.py               Flask 主入口，注册 REST + WebSocket
-│   ├── config.py            读取 config.yaml
-│   ├── db.py                SQLite：用户、审计日志、SSH 端口分配、对话历史
-│   ├── auth.py              登录 / 会话 / 装饰器（login_required / admin_required）
-│   ├── k8s_client.py        K8s 封装：节点、Pod、Service、SSH 端口、exec、文件传输、临时 Python 容器
-│   ├── tools.py             LangGraph 工具集（普通用户 + 管理员两套）
-│   ├── agent.py             LangGraph 状态图：agent → tools → agent，带历史上下文
-│   ├── routes_api.py        REST API（登录/资源/对话/上传/管理员）
-│   └── routes_shell.py      WebSocket Web Shell
-├── frontend/
-│   ├── login.html           登录/注册
-│   ├── dashboard.html       我的资源 + 集群概览 + 全局对话弹窗
-│   ├── admin.html           管理员：节点/全部 Pod/用户管理
-│   ├── logs.html            操作日志
-│   ├── shell.html           网页 Web Shell
-│   ├── css/style.css
-│   └── js/{api,app,chat}.js
-├── data/                    SQLite 数据库存放目录（自动创建）
-└── uploads/                 用户上传文件目录（自动创建）
-```
+## 快速开始
 
-## 部署前置条件
-
-1. **Python 3.10+**（自带 `venv`）
-2. **kubeconfig**：单机能 `kubectl get nodes` 即可
-3. **LLM API**：兼容 OpenAI 协议（OpenAI 官方 / vLLM / OneAPI / Azure OpenAI 网关均可）
-4. （可选）若计划创建多架构容器，请保证集群节点已 join 进来并打好 `kubernetes.io/arch` label
-
-## 配置
-
-首次准备配置（`config.yaml` 已被 `.gitignore` 忽略，只留本地、不进 git）：
+需要 Python 3.10+、可访问且具备相应 RBAC 权限的 Kubernetes API，以及兼容 OpenAI 协议的模型服务。对话资源操作需要模型支持工具调用；论文 Agent 工作流需要有效的大模型配置。
 
 ```bash
-cp config.yaml.example config.yaml   # 然后填入真实值
-```
-
-编辑 `config.yaml`：
-
-```yaml
-llm:
-  api_base: "https://api.openai.com/v1"     # 必填：LLM 网关
-  api_key: "sk-xxxx"                        # 必填
-  model: "gpt-4o-mini"                      # 兼容工具调用的模型
-
-admin:
-  username: "admin"
-  password: "admin123"
-
-kubernetes:
-  kubeconfig_path: "~/.kube/config"
-  namespace: "smart-kube"
-
-ssh:
-  port_range_start: 30000
-  port_range_end: 32000
-  default_root_password: "smartkube"
-```
-
-> 若 `llm.api_key` 未填写或仍为占位符，系统会自动退化为内置规则解析以保证创建/删除/列表/Python 执行等核心动作仍可使用，但失去多轮对话与复杂指令理解能力。
-
-## 启动
-
-```bash
-./run.sh
-```
-
-- 首次会自动创建 `.venv` 并安装依赖
-- 启动后访问 `http://<本机 IP>:<port>`（端口取 `config.yaml` 的 `flask.port`）
-- 默认登录 `admin / <config.yaml 的 admin.password>`
-
-或手动方式：
-
-```bash
-python3 -m venv .venv && source .venv/bin/activate
+git clone https://github.com/kimlinsung/smart-kube.git
+cd smart-kube
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
+cp config.yaml.example config.yaml
+```
+
+编辑 `config.yaml`，填写模型服务、kubeconfig、命名空间与凭据。本地开发可设置 `flask.host: 127.0.0.1`、`flask.port: 5000`。启动前替换会话密钥、管理员密码和容器 SSH 密码。
+
+```bash
+kubectl --kubeconfig=/path/to/kubeconfig get nodes
 python -m backend.app
 ```
 
-## 部署与更新（git pull 工作流）
+访问 **http://127.0.0.1:5000/welcome.html**，使用本地配置的管理员账户进入工作区。进一步配置见[配置模板](config.yaml.example)、[部署与使用指南](docs/guide.zh-CN.md)和[架构维护上下文](AGENTS.md)。
 
-设计原则：**代码进 git，配置和数据出 git**。以下三类文件已被 `.gitignore` 忽略且不被跟踪，`git pull` 不会覆盖它们：
+<details>
+<summary><strong>项目目录</strong></summary>
 
-| 路径 | 内容 | 说明 |
-|---|---|---|
-| `config.yaml` | 配置 + 密钥 | 每台机器本地维护；变更时手动复制覆盖 |
-| `data/` | SQLite 数据库（用户/实验/聊天/日志） | 运行时自动创建，随机器保留 |
-| `uploads/` | 用户上传文件 | 运行时自动创建，随机器保留 |
+```text
+backend/
+  agent.py, tools.py              对话编排
+  paper_agents.py, paper_jobs.py  论文复现实验工作流
+  scheduling.py, k8s_client.py    资源预检与 Kubernetes 集成
+  db.py, routes_api.py            持久化与 REST API
+  routes_shell.py, task_events.py WebSocket 与任务推送
+frontend/
+  welcome.html                   研究方向公开首页
+  js/welcome_scene.js             交互式计算场景
+  paper_workspace.html            论文实验工作区
+tests/                            后端回归测试
+docs/assets/                      仓库展示图片与动图
+deploy/                           服务配置模板
+AGENTS.md                         系统架构与维护上下文
+```
 
-**日常更新**：开发机 `commit + push`；部署机只需 `git pull`，配置、数据库、上传文件全部原地不动。
-配置有变时把新的 `config.yaml` 直接复制/`scp` 覆盖到部署机即可（git 不参与）。
+</details>
 
-> **部署机首次迁移**（仅一次，因为老仓库里 `config.yaml` 曾被跟踪）：
-> ```bash
-> cp config.yaml ~/config.yaml.prod   # 1. 备份生产配置
-> git checkout -- config.yaml          # 2. 放弃本地改动
-> git pull                             # 3. 拉取，config.yaml 移出跟踪
-> cp ~/config.yaml.prod config.yaml    # 4. 恢复生产配置（此后未跟踪+已忽略）
-> ```
+<details>
+<summary><strong>部署与安全边界</strong></summary>
 
-## 密钥与安全
+- 更新时保留 `config.yaml`、`data/`、`uploads/`；重启前备份数据库与代码。
+- 保持一个活动实例。重启会中断后台任务，应等待运行中的任务结束。
+- Pod 所有权校验不能替代网络隔离；CNI、NetworkPolicy 与主机防火墙需独立配置。
+- GPU 可用量依据 allocatable 与现有申请量核算；未知镜像的兼容性不能仅靠预检保证。
+- 不把密钥写进 Git 或远程仓库 URL；第三方前端资源许可证保留在 `frontend/vendor/`。
+- 仓库目前没有项目级 LICENSE 文件，依赖许可证不能代表本项目的授权方式。
 
-- **切勿把 `config.yaml` 提交进 git**：它含 LLM key、飞书 `app_secret`、管理员密码、SSH 默认密码。仓库只保留 `config.yaml.example` 模板。
-- **切勿在 git remote URL 内嵌 GitHub Token**（如 `https://ghp_xxx@github.com/...`）：该 token 会明文留存于 `.git/config`。请改用 SSH remote 或 git 凭据助手（`git config --global credential.helper store` / 系统钥匙串）。
-- 若上述任一密钥曾提交或推送到远端（尤其是公开仓库），请视为已泄露并**立即到对应平台轮换**（GitHub Token、飞书 app_secret、管理员密码、LLM key）。仅从最新代码删除**不能**消除历史中的密钥。
+</details>
 
-## 自然语言示例
+## 本地验证与贡献
 
-进入页面后点击右下角 💬 弹出对话框，可直接说：
+```bash
+python -m unittest discover -s tests -p 'test_*.py'
+git diff --check
+```
 
-| 指令 | Agent 行为 |
-|---|---|
-| `创建一个riscv架构机器上的Ubuntu SSH可用系统` | 自动选 riscv 架构节点，创建 Pod + NodePort Service，分配 SSH 端口，返回 `ssh -p <port> root@<节点IP>` |
-| `批量创建3个Ubuntu SSH容器` | 一次性 ×3 |
-| `在hostname为arm202的节点上创建2个arm64容器` | 自动绑定 `nodeName=arm202` |
-| `列出我的资源` | 调 `list_my_resources` |
-| `删除 ssh-jin-12345-abcd` | 调 `delete_my_pod` |
-| `在arm202节点上执行这份Python代码并返回输出结果` | 先在前端 📎 上传 .py，Agent 拉起一个 `python:3.11-slim` 临时 Pod、cp 进代码、执行、销毁、回传 stdout |
-| `查看集群节点`（管理员） | 调 `admin_list_nodes` |
-| `删除节点 worker-3`（管理员） | 调 `admin_delete_node` |
+修改公开页面时，同时检查桌面、手机、键盘交互、减少动态效果偏好与无 WebGL 降级。修改共享行为前请阅读[贡献指南](CONTRIBUTING.md)。
 
-对话框右上角 **清空** 按钮可清空多轮记忆，开启新会话。
+<div align="center">
 
-## 关键能力说明
+**让方法有据可查，让实验有迹可循。**
 
-### 权限隔离
+[探索 Smart-Kube](https://cloudedgeiot.top/welcome.html) · [反馈问题](https://github.com/kimlinsung/smart-kube/issues) · [English](README.en.md)
 
-- 所有用户创建的 Pod / Service 都打上 `smartkube/owner=<user_id>` label
-- 普通用户接口（`/api/resources`、Web Shell、`delete_pod`、`exec_in_pod`）通过 `assert_pod_owned` 双重校验：DB session + label
-- 管理员可调用 `/api/admin/nodes`、`/api/admin/pods`、`/api/admin/users` 与节点删除
-
-### LangGraph Agent
-
-- 状态图：`START → agent → (tools? → agent ↺) → END`
-- 通过 SQLite `chat_history` 表注入近 20 轮上下文，实现多轮对话
-- 不同角色绑定不同 `bind_tools()` 集，管理员多 3 个工具
-- 工具内部通过 thread-local 拿到当前用户，避免越权
-
-### Web Shell
-
-- `flask-sock` 提供 WebSocket，浏览器页面 `shell.html` ↔ 后端 ↔ Pod `exec` 交互流
-- 同源 cookie session 鉴权，校验 `assert_pod_owned`
-- 输出区直接渲染文本，输入区按行发送命令；支持 ctrl+c / ctrl+d 单字符
-
-### Python 代码执行
-
-1. 用户在对话框 📎 上传 `.py` → 后端落到 `uploads/<uid>/`，session 记录最近文件
-2. 用户说"执行这份 Python"
-3. Agent 调 `run_uploaded_python` → `k8s_client.run_python_oneshot`：
-   - 选节点（可指定 hostname/arch）
-   - 创建 `python:3.11-slim` 临时 Pod（restart=Never，sleep 等待）
-   - 等 Running → `tar` 流 cp 入 `/tmp/main.py` → `exec python /tmp/main.py`
-   - 捕获 stdout/stderr → **删除临时 Pod**
-   - 返回结果给前端
-
-### 资源生命周期
-
-- 列表页 15s 自动刷新 phase（Running/Pending/Failed/CrashLoopBackOff…）
-- SSH NodePort 端口在 SQLite 内分配/回收，避免碰撞
-- 删除 Pod 同时删除其 Service 与端口分配记录
-- 论文工作区支持“回收资源”（仅删除 Units，保留输入、生成代码、报告和过程记录）和“删除工作区”（同时删除资源、文件、生成内容、任务记录和关联实验）
-
-## API 速查
-
-| Method | Path | 说明 |
-|---|---|---|
-| POST | `/api/login` | 登录 |
-| POST | `/api/logout` | 注销 |
-| POST | `/api/register` | 注册普通用户 |
-| GET  | `/api/me` | 当前用户 |
-| GET  | `/api/resources` | 我的 Pod 列表 |
-| DELETE | `/api/resources/<pod>` | 删除我的 Pod |
-| GET  | `/api/cluster/info` | 集群概览 |
-| POST | `/api/chat` | 与 Agent 对话 |
-| GET/DELETE | `/api/chat/history` | 对话历史 |
-| POST | `/api/upload` | 上传文件至 server（最近一次给 Agent 用） |
-| POST | `/api/upload/to_pod` | 上传文件直送 Pod |
-| POST/DELETE | `/api/paper/workspaces/<id>/reclaim` / `/api/paper/workspaces/<id>` | 仅回收工作区计算资源 / 彻底删除工作区 |
-| GET  | `/api/logs` | 操作日志（普通用户仅自己的） |
-| GET  | `/api/admin/nodes` | [admin] 节点列表 |
-| DELETE | `/api/admin/nodes/<n>` | [admin] 删除节点 |
-| GET  | `/api/admin/pods` | [admin] 全量 Pod |
-| GET/POST | `/api/admin/users` | [admin] 用户管理 |
-| DELETE | `/api/admin/users/<id>` | [admin] 删除用户 |
-| WS   | `/ws/shell/<pod>` | Web Shell |
-
-## 常见问题
-
-**Q：sshd 容器跑不起来？**
-A：默认启动脚本会在 ubuntu/debian/alpine/centos 系镜像上自动安装 openssh。如果使用了非常精简的镜像（如 distroless / scratch / busybox），请在创建时指定 `image=` 为已经预装 sshd 的镜像。
-
-**Q：riscv 节点没有 ubuntu 镜像？**
-A：`config.yaml` 的 `arch_images` 段可改成你节点上能拉到的镜像（私有仓亦可）。
-
-**Q：要把 Web Shell 替换成 xterm.js 完整终端？**
-A：把 `shell.html` 的 textarea 替换为 xterm.js 即可，后端 WebSocket 协议无需改动。
-
-**Q：多副本 / 高可用？**
-A：本系统设计目标是 **单机一体化运行**，会话保存在内存 + SQLite。若要多副本，把 SQLite 换成 Postgres / Redis 即可，所有 K8s 操作均通过 control-plane API 不依赖本机状态。
+</div>

@@ -17,11 +17,12 @@
         succeeded: '成功', failed: '失败', timed_out: '超时', invalid_output: '输出无效',
     };
     const TIER_LABELS = { cloud: '云', edge: '边', device: '端' };
-    const PHASE_PROGRESS = { intake: 4, config: 18, code: 28, schedule: 55, execute: 78, analysis: 90, report: 97, completed: 100 };
+    const PHASE_PROGRESS = { intake: 4, config: 18, schedule: 55, code: 74, execute: 82, analysis: 90, report: 97, completed: 100 };
     const ACTIVE = new Set(['queued', 'running']);
     const state = {
         summaries: [], workspace: null, files: [], tab: 'config', cy: null,
         durationChart: null, resourceChart: null, reloadTimer: null, summaryTimer: null,
+        workflowMode: null, detailsStale: false,
         launchMode: null,
     };
 
@@ -166,14 +167,29 @@
         if (!id) return;
         const response = await API.paperWorkspace(id);
         state.workspace = response.workspace;
+        state.detailsStale = false;
         renderWorkspace();
         renderHistory();
+    }
+
+    async function loadWorkspaceStatus(id) {
+        if (!state.workspace || state.workspace.id !== id) return;
+        const response = await API.paperWorkspaceStatus(id);
+        const before = state.workspace;
+        state.workspace = { ...before, ...response.workspace };
+        state.detailsStale ||= before.updated_at !== response.workspace.updated_at
+            || before.stage !== response.workspace.stage
+            || before.status !== response.workspace.status;
+        renderWorkspace(true);
+        renderHistory();
+        // A terminal result is stable, so refresh the full artifact payload once.
+        if (!ACTIVE.has(state.workspace.status) && state.detailsStale) await loadWorkspace(id);
     }
 
     function scheduleReload(id) {
         if (!state.workspace || state.workspace.id !== id) return;
         clearTimeout(state.reloadTimer);
-        state.reloadTimer = setTimeout(() => loadWorkspace(id).catch(() => {}), 100);
+        state.reloadTimer = setTimeout(() => loadWorkspaceStatus(id).catch(() => {}), 500);
     }
 
     function scheduleSummaryReload() {
@@ -184,7 +200,7 @@
     function phaseState(workspace, phase) {
         if (phase === 'retain') return workspace.resources_reclaimed ? 'reclaimed' : 'retained';
         if (['code', 'execute', 'analysis'].includes(phase) && workspace.mode === 'resources') return 'skipped';
-        const order = ['intake', 'config', 'code', 'schedule', 'execute', 'analysis', 'report', 'completed'];
+        const order = ['intake', 'config', 'schedule', 'code', 'execute', 'analysis', 'report', 'completed'];
         const current = order.indexOf(workspace.stage);
         const target = order.indexOf(phase);
         if (workspace.status === 'failed' && workspace.stage === phase) return 'failed';
@@ -197,19 +213,18 @@
     function workflowPositions() {
         const width = $('#workflowGraph').clientWidth;
         if (width < 520) {
-            const ids = ['intake', 'config', 'code', 'schedule', 'execute', 'analysis', 'report', 'retain'];
+            const ids = ['intake', 'config', 'schedule', 'code', 'execute', 'analysis', 'report', 'retain'];
             return Object.fromEntries(ids.map((id, index) => [id, {
                 x: width * [.18, .5, .82][index % 3], y: 40 + Math.floor(index / 3) * 105,
             }]));
         }
-        const ids = ['intake', 'config', 'code', 'schedule', 'execute', 'analysis', 'report', 'retain'];
+        const ids = ['intake', 'config', 'schedule', 'code', 'execute', 'analysis', 'report', 'retain'];
         const gap = (width - 96) / (ids.length - 1);
         return Object.fromEntries(ids.map((id, index) => [id, { x: 48 + gap * index, y: 88 }]));
     }
 
     function renderWorkflow(workspace) {
         if (!window.cytoscape) return;
-        if (state.cy) state.cy.destroy();
         const positions = workflowPositions();
         const labels = {
             intake: '文档理解', config: '配置 Agent', code: '代码生成', schedule: '资源调度',
@@ -220,7 +235,16 @@
         }));
         const edgePairs = workspace.mode === 'resources'
             ? [['intake', 'config'], ['config', 'schedule'], ['schedule', 'report'], ['report', 'retain']]
-            : [['intake', 'config'], ['config', 'code'], ['code', 'schedule'], ['schedule', 'execute'], ['execute', 'analysis'], ['analysis', 'report'], ['report', 'retain']];
+            : [['intake', 'config'], ['config', 'schedule'], ['schedule', 'code'], ['code', 'execute'], ['execute', 'analysis'], ['analysis', 'report'], ['report', 'retain']];
+        if (state.cy && state.workflowMode === workspace.mode) {
+            state.cy.nodes().forEach(node => {
+                node.data('state', phaseState(workspace, node.id()));
+                node.position(positions[node.id()]);
+            });
+            return;
+        }
+        if (state.cy) state.cy.destroy();
+        state.workflowMode = workspace.mode;
         state.cy = cytoscape({
             container: $('#workflowGraph'), elements: [...nodes, ...edgePairs.map((pair, index) => ({ data: { id: `e${index}`, source: pair[0], target: pair[1] } }))],
             layout: { name: 'preset', fit: false }, minZoom: 1, maxZoom: 1, userZoomingEnabled: false, userPanningEnabled: false,
@@ -349,7 +373,7 @@
             : `<div class="inspector-empty">${PHASE_LABELS[state.tab] || state.tab}产物尚未生成</div>`;
     }
 
-    function renderWorkspace() {
+    function renderWorkspace(lightweight = false) {
         const workspace = state.workspace;
         $('#workspaceEmpty').hidden = !!workspace;
         $('#workspaceView').hidden = !workspace;
@@ -375,7 +399,7 @@
         renderArtifacts(workspace);
         renderCharts(workspace);
         renderEvents(workspace);
-        renderInspector();
+        if (!lightweight) renderInspector();
     }
 
     async function previewFile(fileId) {
@@ -477,6 +501,9 @@
         state.tab = button.dataset.tab;
         document.querySelectorAll('.inspector-tabs button').forEach(item => item.classList.toggle('active', item === button));
         renderInspector();
+        if (state.detailsStale && ['code', 'run', 'report'].includes(state.tab)) {
+            loadWorkspace(state.workspace?.id).catch(() => {});
+        }
     };
     $('#retryAnalysis').onclick = retryAnalysis;
     $('#reclaimResources').onclick = reclaimResources;

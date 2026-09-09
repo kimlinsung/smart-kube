@@ -166,6 +166,73 @@ class PaperWorkspaceMigrationTest(TemporaryDatabaseTest):
 
 
 class PaperAgentAdapterTest(unittest.TestCase):
+    def config_artifact(self):
+        artifact = fake_configuration([], {}, {"resources": []}, "full")
+        artifact["resources"][0]["image"] = paper_agents.RUNTIME_IMAGE
+        artifact["execution_scope"] = {
+            "kind": "physical", "description": "CPU execution", "limitations": [],
+        }
+        return artifact
+
+    def test_config_repairs_missing_resource_array(self):
+        artifact = self.config_artifact()
+        with mock.patch.object(paper_agents, "_invoke_json", side_effect=[({}, {}), (artifact, {})]) as invoke:
+            result = paper_agents.run_config_agent(fake_documents([]), {}, {}, "full")
+        self.assertTrue(result["agent_trace"]["config_repaired"])
+        self.assertEqual(invoke.call_count, 2)
+        self.assertIn("资源数组", invoke.call_args.args[2]["validation_error"])
+        self.assertEqual(result["agent_trace"]["validation_attempts"][0]["candidate"], {})
+
+    def test_config_repair_is_bounded_and_preserves_invalid_artifacts(self):
+        with mock.patch.object(paper_agents, "_invoke_json", return_value=({}, {})) as invoke:
+            with self.assertRaises(paper_agents.PaperAgentError) as raised:
+                paper_agents.run_config_agent([], {}, {}, "full")
+        self.assertEqual(invoke.call_count, 2)
+        self.assertEqual(len(raised.exception.diagnostics), 2)
+
+    def test_simulation_requires_verbatim_document_evidence(self):
+        artifact = self.config_artifact()
+        quote = "The scheduler runs on one host's CPUs with no GPU."
+        artifact["execution_scope"] = {
+            "kind": "simulation", "description": "CPU control-plane simulation",
+            "document_evidence": quote, "limitations": ["No physical GPU measurement"],
+        }
+        documents = [{**fake_documents([])[0], "text": quote}]
+        result = paper_agents._normalize_configuration(artifact, documents, "full")
+        self.assertEqual(result["execution_scope"]["kind"], "simulation")
+        with self.assertRaises(paper_agents.PaperAgentError):
+            paper_agents._normalize_configuration(artifact, fake_documents([]), "full")
+        artifact["resources"][0]["image"] = "nvidia/cuda:12.2.0-base-ubuntu22.04"
+        with self.assertRaises(paper_agents.PaperAgentError):
+            paper_agents._normalize_configuration(artifact, documents, "full")
+
+    def test_simulation_cannot_be_reported_as_full_success(self):
+        configuration = self.config_artifact()
+        configuration["execution_scope"].update(kind="simulation", limitations=["No GPU measurement"])
+        response = {"verdict": "passed", "summary": "All passed", "checks": [
+            {"name": "run", "passed": True, "detail": "ok", "evidence": "stdout"},
+        ], "risks": [], "recommendations": []}
+        with mock.patch.object(paper_agents, "_invoke_json", return_value=(response, {})):
+            analysis = paper_agents.run_analysis_agent(configuration, {}, [])
+        self.assertEqual(analysis["verdict"], "needs_attention")
+        self.assertIn("No GPU measurement", analysis["risks"])
+        llm = mock.Mock()
+        llm.invoke.return_value = SimpleNamespace(content="# Report\n" + "Actual evidence. " * 20)
+        with mock.patch.object(paper_agents, "_make_llm", return_value=llm):
+            report, _ = paper_agents.run_report_agent({
+                "id": "w", "experiment_id": "e", "name": "test", "goal": "test",
+                "mode": "full", "config_json": configuration,
+            })
+        self.assertTrue(report.startswith("> 实验范围：模拟或子集验证"))
+        self.assertIn("No GPU measurement", report)
+
+    def test_pdf_quote_normalizes_ligatures_and_line_hyphenation(self):
+        original = "The ﬁxed executors evaluate control-\nplane behaviour rather than physical accelerator contention."
+        quoted = "The fixed executors evaluate control-plane behaviour rather than physical accelerator contention."
+        self.assertEqual(paper_agents._evidence_text(original), paper_agents._evidence_text(quoted))
+        self.assertNotIn(paper_agents._evidence_text("rather than no physical accelerator contention"),
+                         paper_agents._evidence_text(original))
+
     def test_code_agent_generates_two_cloud_runs_with_distinct_delays(self):
         code = (
             "import argparse, json, time\n"
@@ -319,24 +386,23 @@ class KubernetesStartupTest(unittest.TestCase):
 
 
 class KubernetesSchedulingFallbackTest(unittest.TestCase):
-    def test_workspace_fallback_relaxes_gpu_then_node_type(self):
+    def test_workspace_fallback_does_not_drop_gpu(self):
         nodes = [
             {
                 "name": "cpu-edge", "hostname": "cpu-edge", "arch": "amd64",
                 "node_type": "edge", "ready": "True", "allocatable": {}, "capacity": {},
             },
         ]
-        with mock.patch.object(k8s_client, "list_nodes", return_value=nodes):
+        cluster = k8s_client.scheduling.snapshot(nodes, [], [], [], "smart-kube")
+        with mock.patch.object(k8s_client, "scheduling_snapshot", return_value=cluster):
             node, selection = k8s_client._select_node_with_fallback(
                 arch="amd64", hostname=None, node_type="cloud", gpu=1,
                 allow_constraint_fallback=True,
             )
 
-        self.assertEqual(node["name"], "cpu-edge")
-        self.assertEqual(selection["effective"], {
-            "arch": "amd64", "hostname": None, "node_type": None, "gpu": 0,
-        })
-        self.assertEqual(selection["relaxed"], ["gpu", "node_type"])
+        self.assertIsNone(node)
+        self.assertIsNone(selection["effective"])
+        self.assertEqual(selection["relaxed"], [])
 
     def test_without_workspace_fallback_constraints_remain_strict(self):
         nodes = [
@@ -345,7 +411,8 @@ class KubernetesSchedulingFallbackTest(unittest.TestCase):
                 "node_type": "edge", "ready": "True", "allocatable": {}, "capacity": {},
             },
         ]
-        with mock.patch.object(k8s_client, "list_nodes", return_value=nodes):
+        cluster = k8s_client.scheduling.snapshot(nodes, [], [], [], "smart-kube")
+        with mock.patch.object(k8s_client, "scheduling_snapshot", return_value=cluster):
             node, selection = k8s_client._select_node_with_fallback(
                 arch="amd64", hostname=None, node_type="cloud", gpu=1,
                 allow_constraint_fallback=False,
@@ -356,6 +423,93 @@ class KubernetesSchedulingFallbackTest(unittest.TestCase):
 
 
 class PaperWorkspaceJobTest(TemporaryDatabaseTest):
+    def setUp(self):
+        super().setUp()
+        nodes = [{
+            "name": tier + "-1", "hostname": tier + "-1", "arch": arch,
+            "node_type": tier, "ready": "True", "allocatable": {
+                "cpu": "16", "memory": "32Gi", "pods": "110", "nvidia.com/gpu": "0",
+            },
+        } for tier, arch in (("cloud", "amd64"), ("edge", "arm64"))]
+        cluster = k8s_client.scheduling.snapshot(nodes, [], [], [], "smart-kube")
+        cluster["observed_at"] = 123
+        patcher = mock.patch.object(k8s_client, "scheduling_snapshot", return_value=cluster)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def planning_workspace(self):
+        user, _ = auth.create_user("planner", "secret123")
+        experiment = db.create_experiment(user["id"], "planning")
+        return db.create_paper_workspace(user["id"], experiment["id"], "planning", "test", "full", {})
+
+    def test_replans_with_failed_candidate_and_fresh_cluster(self):
+        workspace = self.planning_workspace()
+        candidates = []
+
+        def generate(documents, intelligence, evidence, mode):
+            candidates.append(evidence)
+            result = fake_configuration(documents, intelligence, evidence, mode)
+            if len(candidates) == 1:
+                result["resources"][0]["cpu"] = "1000"
+            return result
+
+        with mock.patch.object(paper_agents, "run_config_agent", side_effect=generate), mock.patch.object(
+            k8s_client, "create_ssh_pod"
+        ) as create:
+            result = paper_jobs._plan_configuration(workspace, fake_documents([]), fake_intelligence([]))
+        self.assertEqual(len(candidates), 2)
+        self.assertEqual(candidates[1]["replanning_feedback"][0]["resources"][0]["cpu"], "1000")
+        self.assertIn("cluster", candidates[1])
+        self.assertEqual(len(result["planning_attempts"]), 1)
+        self.assertTrue(result["preflight"]["placements"])
+        saved = db.get_paper_workspace(workspace["id"], user_id=workspace["user_id"])
+        self.assertTrue(any(event["event_type"] == "preflight_failed" for event in saved["events"]))
+        create.assert_not_called()
+
+    def test_infeasible_gpu_plan_stops_after_three_attempts_without_creation(self):
+        workspace = self.planning_workspace()
+
+        def generate(documents, intelligence, evidence, mode):
+            result = fake_configuration(documents, intelligence, evidence, mode)
+            result["resources"][0]["gpu"] = 1
+            return result
+
+        with mock.patch.object(paper_agents, "run_config_agent", side_effect=generate) as agent, mock.patch.object(
+            k8s_client, "create_ssh_pod"
+        ) as create:
+            with self.assertRaisesRegex(RuntimeError, "3 轮"):
+                paper_jobs._plan_configuration(workspace, fake_documents([]), fake_intelligence([]))
+        self.assertEqual(agent.call_count, 3)
+        create.assert_not_called()
+        saved = db.get_paper_workspace(workspace["id"], user_id=workspace["user_id"])
+        self.assertEqual(saved["config_json"]["resources"][0]["gpu"], 1)
+        self.assertEqual(len(saved["config_json"]["planning_attempts"]), 3)
+        self.assertEqual(saved["config_json"]["preflight"]["status"], "failed")
+
+    def test_cluster_outage_does_not_trigger_resource_downgrade(self):
+        workspace = self.planning_workspace()
+        with mock.patch.object(k8s_client, "scheduling_snapshot", side_effect=RuntimeError("API unavailable")), mock.patch.object(
+            paper_agents, "run_config_agent"
+        ) as agent:
+            with self.assertRaisesRegex(RuntimeError, "API unavailable"):
+                paper_jobs._plan_configuration(workspace, fake_documents([]), fake_intelligence([]))
+        agent.assert_not_called()
+
+    def test_replan_cannot_silently_remove_gpu(self):
+        workspace = self.planning_workspace()
+        calls = []
+
+        def generate(documents, intelligence, evidence, mode):
+            result = fake_configuration(documents, intelligence, evidence, mode)
+            result["resources"][0]["gpu"] = 1 if not calls else 0
+            calls.append(result)
+            return result
+
+        with mock.patch.object(paper_agents, "run_config_agent", side_effect=generate):
+            with self.assertRaisesRegex(RuntimeError, "GPU"):
+                paper_jobs._plan_configuration(workspace, fake_documents([]), fake_intelligence([]))
+        self.assertEqual(len(calls), 3)
+
     def test_execution_timeout_is_persisted_as_timed_out(self):
         run = {
             "run_id": "run-1", "target_tier": "cloud", "target_index": 1,
@@ -497,6 +651,12 @@ class PaperWorkspaceJobTest(TemporaryDatabaseTest):
             if event["event_type"] == "agent_completed"
         ]
         self.assertLess(completed_phases.index("config"), completed_phases.index("code"))
+        placement_event = next(event for event in completed["events"] if event["event_type"] == "placement")
+        code_started = next(
+            event for event in completed["events"]
+            if event["phase"] == "code" and event["event_type"] == "agent_started"
+        )
+        self.assertLess(placement_event["id"], code_started["id"])
         config_event = next(
             event for event in completed["events"]
             if event["phase"] == "config" and event["event_type"] == "agent_completed"
@@ -508,7 +668,7 @@ class PaperWorkspaceJobTest(TemporaryDatabaseTest):
         user, _ = auth.create_user("partial-runner", "secret123")
         experiment = db.create_experiment(user["id"], "部分调度")
         workspace = db.create_paper_workspace(
-            user["id"], experiment["id"], "部分调度", "测试失败保留", "resources",
+            user["id"], experiment["id"], "部分调度", "测试失败保留", "full",
             {},
         )
         path = os.path.join(self.temp_dir.name, "input.yaml")
@@ -523,7 +683,8 @@ class PaperWorkspaceJobTest(TemporaryDatabaseTest):
             "image": "ubuntu:22.04", "ssh_port": 31000, "ssh_user": "root", "ssh_password": "test",
             "ssh_command": "ssh test", "experiment_id": experiment["id"], "gpu": 0,
         }
-        with agent_patches(), mock.patch(
+        code_agent = mock.Mock(side_effect=fake_code)
+        with agent_patches(run_code_agent=code_agent), mock.patch(
             "backend.paper_jobs.k8s_client.create_ssh_pod", side_effect=[placement, RuntimeError("capacity exhausted")]
         ), mock.patch("backend.paper_jobs.task_events.publish_task"):
             paper_jobs._execute_workspace(workspace["id"], task["id"], user, "203.0.113.31")
@@ -532,6 +693,7 @@ class PaperWorkspaceJobTest(TemporaryDatabaseTest):
         self.assertEqual(failed["status"], "failed")
         self.assertEqual(failed["schedule_json"]["created"], 1)
         self.assertTrue(failed["schedule_json"]["resources_retained"])
+        code_agent.assert_not_called()
 
     def test_llm_failure_is_visible_and_does_not_schedule(self):
         user, _ = auth.create_user("agent-failure", "secret123")
@@ -715,6 +877,41 @@ class PaperWorkspaceApiTest(TemporaryDatabaseTest):
             response = self.client.get(f"/api/paper/workspaces/{workspace['id']}")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["workspace"]["access_role"], "admin")
+
+    def test_workspace_history_and_live_status_exclude_heavy_artifacts(self):
+        experiment = db.create_experiment(self.user_id, "轻量状态")
+        workspace = db.create_paper_workspace(
+            self.user_id, experiment["id"], "轻量状态", "查看投影", "full", {}
+        )
+        db.update_paper_workspace(
+            workspace["id"], status="running", stage="execute",
+            config_json={"generated_program": {"code": "print('large payload')"}, "agent_trace": ["trace"]},
+            schedule_json={
+                "created": 1,
+                "placements": [{"pod_name": "unit-a", "ssh_password": "private"}],
+                "executions": [{"pod_name": "unit-a", "stdout": "large stdout", "status": "succeeded"}],
+            },
+            analysis_json={"agent_trace": {"private": True}, "verdict": "passed"},
+            report_md="# a large report",
+        )
+        db.add_paper_workspace_event(
+            workspace["id"], "execute", "succeeded", "Unit 完成", data={"token": "private"}
+        )
+
+        history = self.client.get("/api/paper/workspaces")
+        status = self.client.get(f"/api/paper/workspaces/{workspace['id']}/status")
+
+        self.assertEqual(history.status_code, 200)
+        history_item = next(item for item in history.get_json()["workspaces"] if item["id"] == workspace["id"])
+        self.assertNotIn("config_json", history_item)
+        self.assertNotIn("report_md", history_item)
+        self.assertEqual(status.status_code, 200)
+        payload = status.get_json()["workspace"]
+        payload_text = json.dumps(payload, ensure_ascii=False)
+        for forbidden in ("generated_program", "large payload", "large stdout", "# a large report", "private"):
+            self.assertNotIn(forbidden, payload_text)
+        self.assertEqual(payload["schedule_json"]["placements"][0]["pod_name"], "unit-a")
+        self.assertEqual(payload["events"][-1]["content"], "Unit 完成")
 
     def test_only_full_workflow_can_retry_analysis(self):
         full_experiment = db.create_experiment(self.user_id, "完整流程")

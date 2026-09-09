@@ -44,6 +44,7 @@ async function loadAllPods(silent = false) {
         body.innerHTML = '';
         if (!r.pods.length) {
             body.innerHTML = '<tr><td colspan="8"><div class="empty-state"><div class="t">暂无 Units</div></div></td></tr>';
+            batchSelection.refresh();
             return;
         }
         groupByNodeType(r.pods).forEach(({ type, items }) => {
@@ -63,11 +64,13 @@ async function loadAllPods(silent = false) {
             });
         });
         bindPhaseHover(body);
+        batchSelection.refresh();
     } catch (e) {
         if (!silent) body.innerHTML = `<tr><td colspan="8" style="color:var(--danger)">${escapeHtml(e.message)}</td></tr>`;
     }
 }
 
+const batchSelection = enableResourceSelection('podsBody', () => loadAllPods(true));
 document.getElementById('podsBody').addEventListener('click', async e => {
     const btn = e.target.closest('button');
     if (!btn) return;

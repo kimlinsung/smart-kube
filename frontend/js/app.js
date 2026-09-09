@@ -87,6 +87,7 @@ async function loadMe() {
         const me = await API.me();
         ME = me; window.ME = me;
         renderShell(me);
+        ModelSettings.load().catch(error => console.warn('模型配置加载失败', error.message));
         connectPresence();
         return me;
     } catch (e) {
@@ -148,6 +149,7 @@ function renderShell(me) {
                 <div class="tb-sub">${escapeHtml(meta.sub || '')}</div>
             </div>
             <div class="tb-right">
+                <label class="model-picker"><span>模型</span><select data-model-picker aria-label="大模型" disabled><option>加载中</option></select></label>
                 <button class="ai-btn" id="aiBtn">${icon('sparkle', 'ico')}<span>AI 助手</span></button>
             </div>`;
         const aiBtn = topbar.querySelector('#aiBtn');
@@ -155,6 +157,7 @@ function renderShell(me) {
         const mt = topbar.querySelector('#menuToggle');
         if (mt) mt.onclick = toggleSidebar;
     }
+    ModelSettings.mount();
 }
 // 兼容旧调用名
 const renderTopbar = renderShell;
@@ -239,6 +242,115 @@ function escapeHtml(s) {
     return String(s == null ? '' : s)
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+const ModelSettings = {
+    selected: null, options: [], loading: null, saving: null,
+    async load() {
+        if (!this.loading) {
+            this.loading = API.models().then(data => {
+                this.options = data.models;
+                this.selected = data.selected;
+                this.mount();
+            }).catch(error => { this.loading = null; throw error; });
+        }
+        await this.loading;
+    },
+    mount() {
+        document.querySelectorAll('[data-model-picker]').forEach(select => {
+            if (!this.options.length) return;
+            select.innerHTML = this.options.map(option => `<option value="${escapeHtml(option.id)}" ${option.id === this.selected ? 'selected' : ''} ${option.available ? '' : 'disabled'}>${escapeHtml(option.label)}</option>`).join('');
+            select.value = this.selected;
+            select.disabled = !!this.saving;
+            select.onchange = () => this.change(select.value);
+        });
+    },
+    async change(value) {
+        const previous = this.selected;
+        this.selected = value;
+        this.saving = API.setModel(value);
+        this.mount();
+        try { await this.saving; }
+        catch (error) { this.selected = previous; alert('模型设置保存失败：' + error.message); }
+        finally { this.saving = null; this.mount(); }
+    },
+    async current() {
+        await this.load();
+        if (this.saving) await this.saving;
+        return this.selected;
+    },
+};
+
+function enableResourceSelection(bodyId, reload) {
+    const body = document.getElementById(bodyId);
+    const table = body.closest('table');
+    table.parentElement.classList.add('table-scroll');
+    const selected = new Set();
+    let busy = false;
+    const header = document.createElement('th');
+    header.className = 'resource-select-cell';
+    header.innerHTML = '<input type="checkbox" aria-label="全选资源" title="全选资源" />';
+    table.tHead.rows[0].prepend(header);
+    const all = header.querySelector('input');
+    const bar = document.createElement('div');
+    bar.className = 'resource-batch-actions';
+    bar.innerHTML = '<span data-selected-count>已选 0 项</span><button class="danger btn-sm" type="button" data-delete-selected disabled>删除所选</button><span class="batch-result" role="status"></span>';
+    body.closest('.card').querySelector('.card-head').appendChild(bar);
+    const remove = bar.querySelector('button');
+    const result = bar.querySelector('.batch-result');
+    const checkboxes = () => [...body.querySelectorAll('input[data-resource-select]')];
+    function update() {
+        const boxes = checkboxes();
+        all.checked = boxes.length > 0 && boxes.every(box => selected.has(box.value));
+        all.indeterminate = boxes.some(box => selected.has(box.value)) && !all.checked;
+        all.disabled = busy || !boxes.length;
+        boxes.forEach(box => { box.checked = selected.has(box.value); box.disabled = busy; });
+        remove.disabled = busy || !selected.size;
+        bar.querySelector('[data-selected-count]').textContent = `已选 ${selected.size} 项`;
+        remove.textContent = busy ? '正在删除' : '删除所选';
+    }
+    function refresh() {
+        const names = new Set();
+        for (const row of body.rows) {
+            const button = row.querySelector('button.danger[data-name]');
+            if (button) {
+                const name = button.dataset.name;
+                names.add(name);
+                if (!row.querySelector('[data-resource-select]')) {
+                    const cell = row.insertCell(0);
+                    cell.className = 'resource-select-cell';
+                    const input = document.createElement('input');
+                    input.type = 'checkbox'; input.value = name;
+                    input.dataset.resourceSelect = '';
+                    input.setAttribute('aria-label', '选择 ' + name);
+                    input.onchange = () => { input.checked ? selected.add(name) : selected.delete(name); update(); };
+                    cell.appendChild(input);
+                }
+            } else if (row.cells.length === 1) {
+                row.cells[0].colSpan = table.tHead.rows[0].cells.length;
+            } else if (!row.querySelector('.resource-select-cell')) {
+                row.insertCell(0).className = 'resource-select-cell';
+            }
+        }
+        for (const name of selected) if (!names.has(name)) selected.delete(name);
+        bar.hidden = !names.size && !result.textContent;
+        update();
+    }
+    all.onchange = () => { checkboxes().forEach(box => all.checked ? selected.add(box.value) : selected.delete(box.value)); update(); };
+    remove.onclick = async () => {
+        const names = [...selected];
+        if (busy || !names.length || !confirm(`确认删除所选的 ${names.length} 个资源及其 SSH 服务？\n\n${names.join('\n')}`)) return;
+        busy = true; result.textContent = ''; update();
+        try {
+            const response = await API.deleteResources(names);
+            response.deleted.forEach(name => selected.delete(name));
+            result.textContent = `已删除 ${response.deleted.length} 项` + (response.failed.length ? `，失败 ${response.failed.length} 项` : '');
+            if (response.failed.length) alert(response.failed.map(item => `${item.pod_name}: ${item.error}`).join('\n'));
+            await reload();
+        } catch (error) { result.textContent = '删除失败：' + error.message; }
+        finally { busy = false; update(); }
+    };
+    return { refresh };
 }
 function fmtTime(s) {
     if (!s) return '-';

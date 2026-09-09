@@ -1,0 +1,2 @@
+# Preserve upstream vendor files and exclude them from project language statistics.
+frontend/vendor/* linguist-vendored=true -whitespace

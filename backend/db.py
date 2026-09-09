@@ -60,6 +60,9 @@ def init_db():
             )
             """
         )
+        cur.execute("PRAGMA table_info(users)")
+        if "llm_profile" not in {row["name"] for row in cur.fetchall()}:
+            cur.execute("ALTER TABLE users ADD COLUMN llm_profile TEXT NOT NULL DEFAULT 'default'")
         # 老库升级：审计日志补来源 IP，历史记录保留为空。
         cur.execute("PRAGMA table_info(audit_logs)")
         audit_cols = {r["name"] for r in cur.fetchall()}
@@ -770,28 +773,141 @@ def get_paper_workspace_for_experiment(experiment_id, user_id=None, include_deta
 def list_paper_workspaces(user_id, limit=50, include_all=False):
     with cursor() as cur:
         limit = min(100, max(1, int(limit or 50)))
+        columns = (
+            "w.id,w.user_id,w.experiment_id,w.name,w.goal,w.mode,w.status,w.stage,"
+            "w.retries,w.resources_reclaimed,w.created_at,w.updated_at,w.finished_at,"
+            "e.name AS experiment_name,u.username AS owner_username"
+        )
         if include_all:
             cur.execute(
-                "SELECT w.*, e.name AS experiment_name, u.username AS owner_username, "
+                f"SELECT {columns}, "
                 "'admin' AS access_role FROM paper_workspaces w "
                 "LEFT JOIN experiments e ON e.id=w.experiment_id "
                 "LEFT JOIN users u ON u.id=w.user_id "
-                "ORDER BY w.created_at DESC LIMIT ?",
+                "ORDER BY w.updated_at DESC LIMIT ?",
                 (limit,),
             )
         else:
             cur.execute(
-                "SELECT w.*, e.name AS experiment_name, u.username AS owner_username, "
+                f"SELECT {columns}, "
                 "CASE WHEN w.user_id=? THEN 'owner' ELSE 'collaborator' END AS access_role "
                 "FROM paper_workspaces w LEFT JOIN experiments e ON e.id=w.experiment_id "
                 "LEFT JOIN users u ON u.id=w.user_id "
                 "LEFT JOIN experiment_collaborators c "
                 "ON c.experiment_id=w.experiment_id AND c.user_id=? "
-                "WHERE w.user_id=? OR c.user_id=? ORDER BY w.created_at DESC LIMIT ?",
+                "WHERE w.user_id=? OR c.user_id=? ORDER BY w.updated_at DESC LIMIT ?",
                 (user_id, user_id, user_id, user_id, limit),
             )
         rows = cur.fetchall()
-    return [_paper_workspace_dict(row, include_details=False) for row in rows]
+    summaries = []
+    for row in rows:
+        item = dict(row)
+        item["resources_reclaimed"] = bool(item.get("resources_reclaimed"))
+        summaries.append(item)
+    return summaries
+
+
+def _compact_workspace_schedule(schedule):
+    schedule = schedule if isinstance(schedule, dict) else {}
+    placements = []
+    for placement in schedule.get("placements") or []:
+        if not isinstance(placement, dict):
+            continue
+        placements.append({
+            key: placement[key]
+            for key in ("pod_name", "node", "node_type", "arch", "image", "gpu", "tier_index", "scheduling")
+            if key in placement
+        })
+    executions = []
+    for execution in schedule.get("executions") or []:
+        if not isinstance(execution, dict):
+            continue
+        executions.append({
+            key: execution[key]
+            for key in (
+                "run_id", "pod_name", "node", "arch", "status", "exit_code", "timed_out",
+                "observation_valid", "observation", "started_at", "finished_at", "duration_seconds",
+            )
+            if key in execution
+        })
+    return {
+        key: schedule[key]
+        for key in ("strategy", "requested", "created", "resources_retained", "execution_summary")
+        if key in schedule
+    } | {"placements": placements, "executions": executions}
+
+
+def _compact_workspace_analysis(analysis):
+    analysis = analysis if isinstance(analysis, dict) else {}
+    return {
+        key: analysis[key]
+        for key in ("verdict", "summary", "checks", "risks", "recommendations", "analysed_at", "stage_durations")
+        if key in analysis
+    }
+
+
+def get_paper_workspace_status(workspace_id, user_id=None, event_limit=50):
+    """Read mutable workspace state without loading code, report, or agent traces."""
+    clauses, params = ["w.id=?"], [workspace_id]
+    if user_id is not None:
+        clauses.append("w.user_id=?")
+        params.append(user_id)
+    with cursor() as cur:
+        cur.execute(
+            "SELECT w.id,w.user_id,w.experiment_id,w.name,w.goal,w.mode,w.status,w.stage,"
+            "w.resource_spec,w.schedule_json,w.analysis_json,w.retries,w.resources_reclaimed,"
+            "w.created_at,w.updated_at,w.finished_at,e.name AS experiment_name "
+            "FROM paper_workspaces w LEFT JOIN experiments e ON e.id=w.experiment_id "
+            f"WHERE {' AND '.join(clauses)}",
+            params,
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        item["resource_spec"] = _json_load(item.get("resource_spec"), {})
+        item["schedule_json"] = _compact_workspace_schedule(_json_load(item.get("schedule_json"), {}))
+        item["analysis_json"] = _compact_workspace_analysis(_json_load(item.get("analysis_json"), {}))
+        item["resources_reclaimed"] = bool(item.get("resources_reclaimed"))
+        cur.execute(
+            "SELECT id,workspace_id,original_name,size,content_type,artifact_type,created_at "
+            "FROM paper_workspace_files WHERE workspace_id=? ORDER BY id",
+            (workspace_id,),
+        )
+        item["files"] = [dict(file) for file in cur.fetchall()]
+        event_limit = min(100, max(1, int(event_limit or 50)))
+        cur.execute(
+            "SELECT id,phase,event_type,content,created_at FROM paper_workspace_events "
+            "WHERE workspace_id=? ORDER BY id DESC LIMIT ?",
+            (workspace_id, event_limit),
+        )
+        item["events"] = list(reversed([dict(event) for event in cur.fetchall()]))
+        cur.execute(
+            "SELECT id,status,title,detail,progress,metadata,created_at,started_at,updated_at,finished_at "
+            "FROM execution_tasks WHERE user_id=? AND experiment_id=? AND kind IN ('paper','paper_analysis') "
+            "ORDER BY created_at DESC, rowid DESC LIMIT 30",
+            (item["user_id"], item["experiment_id"]),
+        )
+        tasks = []
+        for task_row in cur.fetchall():
+            task = _task_dict(task_row, include_events=False)
+            if task.get("metadata", {}).get("workspace_id") == workspace_id:
+                tasks.append(task)
+        item["tasks"] = tasks
+    return item
+
+
+def get_paper_workspace_presentation_for_experiment(experiment_id, event_limit=50):
+    """Compact experiment-detail projection, retaining only the displayed report."""
+    with cursor() as cur:
+        cur.execute("SELECT id,report_md FROM paper_workspaces WHERE experiment_id=?", (experiment_id,))
+        row = cur.fetchone()
+    if not row:
+        return None
+    workspace = get_paper_workspace_status(row["id"], event_limit=event_limit)
+    if workspace:
+        workspace["report_md"] = row["report_md"]
+    return workspace
 
 
 def get_paper_workspace_file(file_id, user_id=None):

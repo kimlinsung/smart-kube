@@ -40,11 +40,17 @@ const API = {
 
     listResources() { return this.get('/api/resources'); },
     deleteResource(name) { return this.del('/api/resources/' + encodeURIComponent(name)); },
+    deleteResources(names) { return this.post('/api/resources/batch-delete', { pod_names: names }); },
+    models() { return this.get('/api/models'); },
+    setModel(profile) { return this.request('PUT', '/api/me/model', { llm_profile: profile }); },
     describeResource(name) { return this.get('/api/resources/' + encodeURIComponent(name) + '/describe'); },
     clusterInfo() { return this.get('/api/cluster/info'); },
 
     chat(msg) { return this.post('/api/chat', { message: msg }); },
-    startChatTask(msg) { return this.post('/api/chat/tasks', { message: msg }); },
+    async startChatTask(msg) {
+        const profile = await ModelSettings.current();
+        return this.post('/api/chat/tasks', { message: msg, llm_profile: profile });
+    },
     chatHistory() { return this.get('/api/chat/history'); },
     clearChat() { return this.del('/api/chat/history'); },
     tasks() { return this.get('/api/tasks'); },
@@ -77,7 +83,9 @@ const API = {
     runScript(fileId, options={}) { return this.post(`/api/scripts/${fileId}/run`, options); },
     paperWorkspaces() { return this.get('/api/paper/workspaces'); },
     paperWorkspace(id) { return this.get(`/api/paper/workspaces/${encodeURIComponent(id)}`); },
-    createPaperWorkspace(formData, onProgress) {
+    paperWorkspaceStatus(id) { return this.get(`/api/paper/workspaces/${encodeURIComponent(id)}/status`); },
+    async createPaperWorkspace(formData, onProgress) {
+        formData.set('llm_profile', await ModelSettings.current());
         return new Promise((resolve, reject) => {
             const xhr = new XMLHttpRequest();
             xhr.open('POST', '/api/paper/workspaces');
@@ -99,7 +107,9 @@ const API = {
     paperFileContent(workspaceId, fileId) {
         return this.get(`/api/paper/workspaces/${encodeURIComponent(workspaceId)}/files/${fileId}/content`);
     },
-    retryPaperAnalysis(id) { return this.post(`/api/paper/workspaces/${encodeURIComponent(id)}/analysis/retry`); },
+    async retryPaperAnalysis(id) {
+        return this.post(`/api/paper/workspaces/${encodeURIComponent(id)}/analysis/retry`, { llm_profile: await ModelSettings.current() });
+    },
     reclaimPaperWorkspace(id) { return this.post(`/api/paper/workspaces/${encodeURIComponent(id)}/reclaim`); },
     deletePaperWorkspace(id) { return this.del(`/api/paper/workspaces/${encodeURIComponent(id)}`); },
     uploadToPod(file, podName, destDir='/tmp') {

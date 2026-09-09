@@ -39,7 +39,7 @@ def start_chat_task(app, user, message, uploaded_file, experiment_id, source_ip)
         "chat",
         message[:80],
         "等待 AI 助手处理",
-        {"message": message},
+        {"message": message, "llm_profile": user.get("llm_profile", "default")},
     )
     task_events.publish_task(task["id"])
     _run_in_thread(

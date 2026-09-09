@@ -124,7 +124,10 @@ class ExperimentSharingTest(unittest.TestCase):
     def test_collaborator_can_read_artifacts_but_cannot_operate(self):
         self.add_collaborator()
         client = self.client_for(self.collaborator)
-        with mock.patch("backend.routes_api.k8s_client.list_pods_by_experiment", return_value=[{
+        with mock.patch(
+            "backend.routes_api.k8s_client.pod_counts_by_experiment",
+            return_value={self.experiment["id"]: {"cloud": 0, "edge": 1, "device": 0, "total": 1}},
+        ) as pod_counts, mock.patch("backend.routes_api.k8s_client.list_pods_by_experiment", return_value=[{
             "name": "unit-a", "node_type": "edge", "ssh_password": "private-password",
             "ssh_command": "ssh private", "token": "private-token",
         }]):
@@ -132,6 +135,7 @@ class ExperimentSharingTest(unittest.TestCase):
             workspace_list = client.get("/api/paper/workspaces")
             detail = client.get(f"/api/experiments/{self.experiment['id']}")
             workspace = client.get(f"/api/paper/workspaces/{self.workspace['id']}")
+        pod_counts.assert_called_once()
         self.assertEqual(experiments[0]["access_role"], "collaborator")
         self.assertEqual(detail.status_code, 200)
         detail_text = json.dumps(detail.get_json(), ensure_ascii=False)

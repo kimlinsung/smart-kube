@@ -15,6 +15,7 @@ CONFIG = _load()
 
 # 常用项预解析
 LLM_CONF = CONFIG.get("llm", {})
+LLM_PROVIDERS = CONFIG.get("llm_providers", {})
 FLASK_CONF = CONFIG.get("flask", {})
 ADMIN_CONF = CONFIG.get("admin", {})
 K8S_CONF = CONFIG.get("kubernetes", {})

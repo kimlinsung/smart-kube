@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import copy
 import io
 import logging
 import os
@@ -24,7 +25,7 @@ from typing import Iterable, Optional
 from kubernetes import client, config, stream
 from kubernetes.client import ApiException
 
-from . import db
+from . import db, scheduling
 from .config import (
     ARCH_IMAGES,
     KUBECONFIG,
@@ -40,7 +41,7 @@ _LABEL_APP = "smartkube/app"
 _LABEL_KIND = "smartkube/kind"  # ssh / exec / generic
 _LABEL_EXPERIMENT = "smartkube/experiment-id"
 
-# 申请 GPU 时强制使用的 CUDA 镜像（必须与 nvidia.com/gpu 资源配套）
+# Default for GPU requests without an explicit runtime image.
 GPU_IMAGE = "docker.io/nvidia/cuda:11.8.0-runtime-ubuntu20.04"
 GPU_RESOURCE_KEY = "nvidia.com/gpu"
 
@@ -105,7 +106,7 @@ def ensure_namespace():
 
 def list_nodes() -> list[dict]:
     res = []
-    nodes = core_v1.list_node().items
+    nodes = core_v1.list_node(_request_timeout=_STARTUP_REQUEST_TIMEOUT).items
     for n in nodes:
         labels = n.metadata.labels or {}
         cond_ready = "Unknown"
@@ -125,6 +126,9 @@ def list_nodes() -> list[dict]:
             "capacity": dict(n.status.capacity or {}),
             "allocatable": dict(n.status.allocatable or {}),
             "labels": labels,
+            "taints": [core_v1.api_client.sanitize_for_serialization(t) for t in n.spec.taints or []],
+            "conditions": [{"type": c.type, "status": c.status} for c in n.status.conditions or []],
+            "images": [name for image in n.status.images or [] for name in image.names or []],
         })
     return res
 
@@ -160,7 +164,7 @@ def cluster_info() -> dict:
 
 def _node_gpu_capacity(n: dict) -> int:
     """节点上 nvidia.com/gpu 可分配数量（来自 device-plugin 注册）。"""
-    cap = n.get("allocatable") or n.get("capacity") or {}
+    cap = n.get("allocatable") or {}
     try:
         return int(cap.get(GPU_RESOURCE_KEY, 0) or 0)
     except (TypeError, ValueError):
@@ -173,35 +177,42 @@ def find_node_by_arch_or_hostname(
     node_type: Optional[str] = None,
     gpu: int = 0,
 ) -> Optional[dict]:
-    """根据条件筛选一个 Ready 节点。
-    hostname 精确匹配优先级最高；arch 规范化后匹配 kubernetes.io/arch；
-    node_type 匹配 node-type 标签（cloud/edge/device）。
-    gpu>0 时要求节点 allocatable 上有 nvidia.com/gpu 且 ≥ gpu。
-    任何条件若指定但无匹配节点，则返回 None（不静默兜底）。
-    """
-    nodes = list_nodes()
-    if hostname:
-        for n in nodes:
-            if n["hostname"] == hostname or n["name"] == hostname:
-                if gpu > 0 and _node_gpu_capacity(n) < gpu:
-                    return None
-                return n
-        return None
+    node, _ = _select_node_with_fallback(arch, hostname, node_type, gpu, False)
+    return node
 
-    candidates = [n for n in nodes if n["ready"] == "True"]
-    if arch:
-        arch_norm = _normalize_arch(arch)
-        candidates = [n for n in candidates if _normalize_arch(n["arch"]) == arch_norm]
-    if node_type:
-        candidates = [n for n in candidates if n.get("node_type", "edge") == node_type]
-    if gpu > 0:
-        candidates = [n for n in candidates if _node_gpu_capacity(n) >= gpu]
 
-    if candidates:
-        return candidates[0]
-    if arch or node_type or gpu > 0:
-        return None  # 有条件但无匹配，不静默兜底
-    return None
+def scheduling_snapshot():
+    """Fail closed when cluster-wide resource or namespace policy reads fail."""
+    serialize = core_v1.api_client.sanitize_for_serialization
+    pods = core_v1.list_pod_for_all_namespaces(_request_timeout=_STARTUP_REQUEST_TIMEOUT)
+    quotas = core_v1.list_namespaced_resource_quota(NAMESPACE, _request_timeout=_STARTUP_REQUEST_TIMEOUT)
+    limits = core_v1.list_namespaced_limit_range(NAMESPACE, _request_timeout=_STARTUP_REQUEST_TIMEOUT)
+    state = scheduling.snapshot(list_nodes(), serialize(pods)["items"], serialize(quotas)["items"],
+                                serialize(limits)["items"], NAMESPACE)
+    state["observed_at"] = int(time.time())
+    return state
+
+
+def preflight_resources(resources, snapshot=None, allow_constraint_fallback=False):
+    state = copy.deepcopy(snapshot if snapshot is not None else scheduling_snapshot())
+    placements = []
+    for row in resources:
+        req, lim = scheduling.requirements(
+            row.get("cpu") or RES_CONF.get("default_cpu_request", "100m"),
+            row.get("memory") or RES_CONF.get("default_memory_request", "128Mi"), row.get("gpu", 0),
+            row.get("cpu") or RES_CONF.get("default_cpu_limit", "1"),
+            row.get("memory") or RES_CONF.get("default_memory_limit", "1Gi"),
+        )
+        image = row.get("image") or (GPU_IMAGE if row.get("gpu") else _resolve_image(row.get("arch"), None))
+        for index in range(row.get("count", 1)):
+            node, rejected = scheduling.select(
+                state, req, lim, image, arch=_normalize_arch(row["arch"]) if row.get("arch") else None,
+                hostname=row.get("hostname"), node_type=row.get("tier"), fallback=allow_constraint_fallback,
+                reserve=True, services=1,
+            )
+            placements.append({"tier": row.get("tier"), "index": index + 1, "node": node["name"],
+                               "arch": node["arch"], "image": image, "rejected_nodes": rejected})
+    return {"observed_at": state.get("observed_at"), "placements": placements}
 
 
 def _select_node_with_fallback(
@@ -210,58 +221,38 @@ def _select_node_with_fallback(
     node_type: Optional[str],
     gpu: int,
     allow_constraint_fallback: bool,
+    cpu: Optional[str] = None,
+    memory: Optional[str] = None,
+    image: Optional[str] = None,
+    services: int = 0,
+    cpu_limit: Optional[str] = None,
+    memory_limit: Optional[str] = None,
 ) -> tuple[Optional[dict], dict]:
-    """选择节点；工作区可依次放宽 GPU、节点类型和架构。
-
-    hostname 始终是硬约束。资源偏好逐步放宽时保留完整记录，供工作区展示
-    实际采用的条件，避免用户误以为任务按原始规格运行。
-    """
+    """Only node type may be relaxed; GPU, architecture and hostname stay hard."""
     requested = {
         "arch": arch,
         "hostname": hostname,
         "node_type": node_type,
         "gpu": gpu,
     }
-    attempts = [(arch, node_type, gpu)]
-    if allow_constraint_fallback:
-        relaxed_gpu = 0 if gpu > 0 else gpu
-        if gpu > 0:
-            attempts.append((arch, node_type, relaxed_gpu))
-        if node_type:
-            attempts.append((arch, None, relaxed_gpu))
-        if arch:
-            attempts.append((None, None, relaxed_gpu))
-
-    seen = set()
-    for attempt_arch, attempt_node_type, attempt_gpu in attempts:
-        key = (attempt_arch, attempt_node_type, attempt_gpu)
-        if key in seen:
-            continue
-        seen.add(key)
-        node = find_node_by_arch_or_hostname(
-            arch=attempt_arch,
-            hostname=hostname,
-            node_type=attempt_node_type,
-            gpu=attempt_gpu,
+    req, lim = scheduling.requirements(
+        cpu or RES_CONF.get("default_cpu_request", "100m"),
+        memory or RES_CONF.get("default_memory_request", "128Mi"), gpu,
+        cpu_limit or cpu or RES_CONF.get("default_cpu_limit", "1"),
+        memory_limit or memory or RES_CONF.get("default_memory_limit", "1Gi"),
+    )
+    state = scheduling_snapshot()
+    try:
+        node, rejected = scheduling.select(
+            state, req, lim, image, arch=_normalize_arch(arch) if arch else None,
+            hostname=hostname, node_type=node_type, fallback=allow_constraint_fallback, services=services,
         )
-        if not node:
-            continue
-        effective = {
-            "arch": attempt_arch,
-            "hostname": hostname,
-            "node_type": attempt_node_type,
-            "gpu": attempt_gpu,
-        }
-        relaxed = [
-            key for key in ("gpu", "node_type", "arch")
-            if requested[key] not in (None, 0, "") and requested[key] != effective[key]
-        ]
-        return node, {
-            "requested": requested,
-            "effective": effective,
-            "relaxed": relaxed,
-        }
-    return None, {"requested": requested, "effective": None, "relaxed": []}
+    except RuntimeError as exc:
+        return None, {"requested": requested, "effective": None, "relaxed": [], "error": str(exc)}
+    effective = {**requested, "arch": node["arch"], "node_type": node["node_type"]}
+    return node, {"requested": requested, "effective": effective,
+                  "relaxed": ["node_type"] if node_type and node_type != node["node_type"] else [],
+                  "observed_at": state["observed_at"], "rejected_nodes": rejected}
 
 
 # --------------------------------------------------------------------------------------
@@ -322,22 +313,17 @@ def _build_pod_spec(
     containers, restart_policy, hostname, arch_canonical, node,
     node_type: Optional[str] = None, **kwargs
 ) -> client.V1PodSpec:
-    """构建 PodSpec。
-    hostname → node_name 固定调度；
-    arch/node_type → nodeSelector 标签调度（可同时指定）；
-    均未指定 → 无约束，调度器自由分配。
-    """
+    """Keep the checked node, while retaining scheduler admission and taint checks."""
     spec = client.V1PodSpec(containers=containers, restart_policy=restart_policy, **kwargs)
-    if hostname:
-        spec.node_name = node["name"]
-    else:
-        selector = {}
-        if arch_canonical:
-            selector["kubernetes.io/arch"] = arch_canonical
-        if node_type:
-            selector["node-type"] = node_type
-        if selector:
-            spec.node_selector = selector
+    spec.affinity = client.V1Affinity(node_affinity=client.V1NodeAffinity(
+        required_during_scheduling_ignored_during_execution=client.V1NodeSelector(
+            node_selector_terms=[client.V1NodeSelectorTerm(match_fields=[
+                client.V1NodeSelectorRequirement(key="metadata.name", operator="In", values=[node["name"]])
+            ])]
+        )
+    ))
+    if arch_canonical:
+        spec.node_selector = {"kubernetes.io/arch": arch_canonical}
     return spec
 
 
@@ -358,26 +344,33 @@ def create_ssh_pod(
     """创建一个安装并启动 SSHD 的 Pod，并通过 NodePort Service 暴露 22 端口。
 
     返回：包含 pod_name、node、node_type、ssh_host、ssh_port、ssh_user、ssh_password 的 dict。
-    gpu>0 时强制使用 GPU_IMAGE，并在 resources.limits 上申请 nvidia.com/gpu。
+    GPU requests use the supplied runtime image, or GPU_IMAGE when omitted.
     """
     ensure_namespace()
-    gpu = max(0, int(gpu or 0))
+    scheduling.requirements(cpu or "100m", memory or "128Mi", gpu)
+    gpu = int(gpu or 0)
     arch_canonical = _normalize_arch(arch) if arch else None
+    image_resolved = image or (GPU_IMAGE if gpu else _resolve_image(arch_canonical, None))
     node, selection = _select_node_with_fallback(
         arch=arch_canonical,
         hostname=hostname,
         node_type=node_type,
         gpu=gpu,
         allow_constraint_fallback=allow_constraint_fallback,
+        cpu=cpu, memory=memory,
+        image=image_resolved,
+        services=1,
     )
     if not node:
+        if selection.get("error"):
+            raise RuntimeError(selection["error"])
         parts = []
         if hostname:   parts.append(f"hostname={hostname}")
         if arch_canonical: parts.append(f"arch={arch_canonical}")
         if node_type:  parts.append(f"node-type={node_type}")
         if gpu > 0:    parts.append(f"nvidia.com/gpu>={gpu}")
         cond = "，".join(parts) if parts else "（集群无就绪节点）"
-        fallback_note = "；已依次尝试放宽 GPU、节点类型和架构" if allow_constraint_fallback else ""
+        fallback_note = "；已尝试其他节点类型，保留 GPU 和架构要求" if allow_constraint_fallback else ""
         raise RuntimeError(f"未找到符合条件的就绪节点：{cond}{fallback_note}")
 
     effective = selection["effective"]
@@ -385,11 +378,6 @@ def create_ssh_pod(
     effective_node_type = effective["node_type"]
     effective_gpu = effective["gpu"]
 
-    if effective_gpu > 0:
-        # 申请 GPU 时强制使用 CUDA 镜像，避免镜像内缺驱动/库导致跑不起来
-        image_resolved = GPU_IMAGE
-    else:
-        image_resolved = _resolve_image(effective_arch or node["arch"], image)
     owner_label = str(user["id"])
     pod_name = _make_pod_name(name_prefix, user["username"])
     root_pwd = SSH_CONF.get("default_root_password", "smartkube")
@@ -453,6 +441,7 @@ def create_ssh_pod(
             labels=labels,
             annotations={
                 "smartkube/owner-username": user["username"],
+                "smartkube/selected-node": node["name"],
                 "smartkube/arch": effective_arch or node["arch"] or "",
                 "smartkube/node-type": node.get("node_type", "edge"),
                 "smartkube/image": image_resolved,
@@ -476,10 +465,11 @@ def create_ssh_pod(
     )
 
     try:
+        core_v1.create_namespaced_pod(NAMESPACE, pod, dry_run="All", _request_timeout=_STARTUP_REQUEST_TIMEOUT)
         core_v1.create_namespaced_pod(NAMESPACE, pod)
     except ApiException as e:
         _release_ssh_port(pod_name)
-        raise RuntimeError(f"Pod 创建失败：{e.reason}") from e
+        raise RuntimeError(f"Pod 创建失败：{e.body or e.reason}") from e
 
     svc_labels = {_LABEL_OWNER: owner_label, _LABEL_APP: pod_name}
     if experiment_id:
@@ -765,6 +755,62 @@ def list_pods_by_experiment(experiment_id: int) -> list[dict]:
     return out
 
 
+def pod_counts_by_experiment(experiment_ids) -> dict[int, dict[str, int]]:
+    """Return pod counts for many experiments with one namespace pod listing.
+
+    The experiment page used to make two Kubernetes API calls for every row in
+    its history. Pod annotations normally carry the selected node type, so a
+    node listing is only needed for legacy pods that predate that annotation.
+    """
+    ids = {int(item) for item in experiment_ids if str(item).isdigit()}
+    counts = {
+        experiment_id: {"cloud": 0, "edge": 0, "device": 0, "total": 0}
+        for experiment_id in ids
+    }
+    if not ids:
+        return counts
+    try:
+        pods = core_v1.list_namespaced_pod(NAMESPACE).items
+    except Exception:
+        return counts
+
+    legacy_nodes = {
+        pod.spec.node_name or ""
+        for pod in pods
+        if (
+            str((pod.metadata.labels or {}).get(_LABEL_EXPERIMENT) or "").isdigit()
+            and int((pod.metadata.labels or {})[_LABEL_EXPERIMENT]) in ids
+            and not (pod.metadata.annotations or {}).get("smartkube/node-type")
+        )
+    }
+    node_type_map: dict[str, str] = {}
+    if legacy_nodes:
+        try:
+            node_type_map = {
+                node.metadata.name: (node.metadata.labels or {}).get("node-type", "edge")
+                for node in core_v1.list_node().items
+            }
+        except Exception:
+            pass
+
+    for pod in pods:
+        labels = pod.metadata.labels or {}
+        raw_experiment_id = labels.get(_LABEL_EXPERIMENT)
+        if not str(raw_experiment_id or "").isdigit():
+            continue
+        experiment_id = int(raw_experiment_id)
+        if experiment_id not in counts:
+            continue
+        annotations = pod.metadata.annotations or {}
+        node_type = annotations.get("smartkube/node-type") or node_type_map.get(
+            pod.spec.node_name or "", "edge"
+        )
+        bucket = counts[experiment_id]
+        bucket[node_type] = bucket.get(node_type, 0) + 1
+        bucket["total"] += 1
+    return counts
+
+
 def migrate_unlabeled_pods_to(default_experiment_resolver) -> int:
     """把所有缺 experiment-id 标签的 Pod 关联到 owner 的默认实验上。
     default_experiment_resolver(user_id:int) -> experiment_id:int
@@ -930,9 +976,12 @@ def run_python_oneshot(
     progress("正在选择可用节点", 10)
     ensure_namespace()
     arch_canonical = _normalize_arch(arch) if arch else None
-    node = find_node_by_arch_or_hostname(arch=arch_canonical, hostname=hostname, node_type=node_type)
+    node, selection = _select_node_with_fallback(
+        arch_canonical, hostname, node_type, 0, False, cpu="100m", memory="128Mi", image=image,
+        cpu_limit="1", memory_limit="1Gi",
+    )
     if not node:
-        raise RuntimeError("未找到可用节点用于 Python 执行")
+        raise RuntimeError(selection.get("error") or "未找到可用节点用于 Python 执行")
     progress(f"已选择节点 {node['name']}", 18)
     name = _make_pod_name("pyexec", user["username"])
 
@@ -965,6 +1014,7 @@ def run_python_oneshot(
                 "smartkube/arch": arch_canonical or node["arch"] or "",
                 "smartkube/node-type": node.get("node_type", "edge"),
                 "smartkube/image": image,
+                "smartkube/selected-node": node["name"],
                 "smartkube/experiment-id": str(experiment_id) if experiment_id else "",
             },
         ),
@@ -978,29 +1028,31 @@ def run_python_oneshot(
         ),
     )
     progress("正在创建临时 Python Pod", 25)
+    core_v1.create_namespaced_pod(NAMESPACE, pod, dry_run="All", _request_timeout=_STARTUP_REQUEST_TIMEOUT)
     core_v1.create_namespaced_pod(NAMESPACE, pod)
 
-    # 等 Pod Running
-    progress("等待临时 Pod 就绪", 35)
-    deadline = time.time() + 90
-    phase = ""
-    while time.time() < deadline:
-        try:
-            p = core_v1.read_namespaced_pod(name, NAMESPACE)
-            phase = p.status.phase
-        except ApiException:
-            phase = ""
-        if phase == "Running":
-            break
-        time.sleep(1)
-    if phase != "Running":
-        try:
-            core_v1.delete_namespaced_pod(name, NAMESPACE)
-        except Exception:
-            pass
-        raise RuntimeError(f"临时 Python Pod 未能进入 Running，状态：{phase}")
-
     try:
+        progress("等待临时 Pod 就绪", 35)
+        deadline = time.time() + 90
+        phase = ""
+        while time.time() < deadline:
+            p = core_v1.read_namespaced_pod(name, NAMESPACE, _request_timeout=_STARTUP_REQUEST_TIMEOUT)
+            phase = p.status.phase
+            statuses = p.status.container_statuses or []
+            if phase == "Running" and any(c.name == "main" and c.ready and c.state and c.state.running for c in statuses):
+                break
+            for c in statuses:
+                waiting = c.state.waiting if c.state else None
+                if waiting and waiting.reason in scheduling.PULL_ERRORS | {"CreateContainerConfigError", "CrashLoopBackOff"}:
+                    raise RuntimeError(f"临时 Python Pod: {waiting.reason}: {waiting.message}")
+            for condition in p.status.conditions or []:
+                if condition.type == "PodScheduled" and condition.status == "False":
+                    raise RuntimeError(f"临时 Python Pod 调度失败：{condition.message}")
+            if phase in {"Failed", "Succeeded"}:
+                raise RuntimeError(f"临时 Python Pod 提前结束：{phase}")
+            time.sleep(1)
+        else:
+            raise RuntimeError(f"临时 Python Pod 未就绪，状态：{phase}")
         progress("临时 Pod 已就绪，正在上传脚本", 52)
         copy_to_pod(name, code_path, dest_dir="/tmp", filename="main.py")
         progress("脚本已上传，正在执行", 68)

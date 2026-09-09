@@ -82,6 +82,7 @@ function injectAssistant() {
       </section>
       <div class="assistant-suggest" id="aSuggest"></div>
       <div class="assistant-input">
+        <label class="model-picker assistant-model-picker"><span>模型</span><select data-model-picker aria-label="助手模型" disabled><option>加载中</option></select></label>
         <div class="script-workspace">
           <button class="script-picker" id="aScriptPicker" type="button">
             <span class="script-picker-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></span>
@@ -116,6 +117,7 @@ function injectAssistant() {
         </div>
       </div>`;
     document.body.appendChild(panel);
+    ModelSettings.mount();
 
     const msgsEl = panel.querySelector('#aMsgs');
     const textEl = panel.querySelector('#aText');

@@ -226,6 +226,7 @@ function renderPods() {
             <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5 9 5 9-5zM3 8v8l9 5 9-5V8"/></svg>
             <div class="t">该实验暂无 Units</div><div class="s">进入实验后，用右上角「AI 助手」创建资源。</div>
         </div></td></tr>`;
+        batchSelection.refresh();
         return;
     }
     body.innerHTML = '';
@@ -234,6 +235,7 @@ function renderPods() {
         items.forEach(p => { const tr = document.createElement('tr'); tr.innerHTML = renderPodRow(p); body.appendChild(tr); });
     });
     bindPhaseHover(body);
+    batchSelection.refresh();
 }
 
 function renderPaperArtifacts() {
@@ -278,6 +280,7 @@ async function loadDetail(silent = false) {
     }
 }
 
+const batchSelection = enableResourceSelection('podsBody', () => loadDetail());
 document.getElementById('podsBody').addEventListener('click', async e => {
     const btn = e.target.closest('button'); if (!btn) return;
     const act = btn.dataset.act, name = btn.dataset.name;

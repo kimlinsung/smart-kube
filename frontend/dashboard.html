@@ -99,6 +99,7 @@ async function loadPods(silent = false) {
                 <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5 9 5 9-5zM3 8v8l9 5 9-5V8"/></svg>
                 <div class="t">暂无资源</div><div class="s">点击右上角「AI 助手」，用自然语言创建你的第一个容器。</div>
             </div></td></tr>`;
+            batchSelection.refresh();
             return;
         }
         body.innerHTML = '';
@@ -107,11 +108,13 @@ async function loadPods(silent = false) {
             items.forEach(p => { const tr = document.createElement('tr'); tr.innerHTML = renderPodRow(p); body.appendChild(tr); });
         });
         bindPhaseHover(body);
+        batchSelection.refresh();
     } catch (e) {
         if (!silent) body.innerHTML = `<tr><td colspan="9" style="color:var(--danger)">加载失败：${escapeHtml(e.message)}</td></tr>`;
     }
 }
 
+const batchSelection = enableResourceSelection('podsBody', () => loadPods(true));
 document.getElementById('podsBody').addEventListener('click', async e => {
     const btn = e.target.closest('button'); if (!btn) return;
     const act = btn.dataset.act, name = btn.dataset.name;

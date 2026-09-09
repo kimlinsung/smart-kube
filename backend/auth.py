@@ -118,7 +118,7 @@ def current_user():
         return None
     with db.cursor() as cur:
         cur.execute(
-            "SELECT id, username, role, created_at, "
+            "SELECT id, username, role, created_at, llm_profile, "
             "name, en_name, email, enterprise_email, mobile, "
             "avatar_url, avatar_big, "
             "feishu_open_id, feishu_union_id, tenant_key "

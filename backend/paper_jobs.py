@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import yaml
 
-from . import audit, db, k8s_client, paper_agents, task_events
+from . import audit, db, k8s_client, model_settings, paper_agents, task_events
 
 
 def _run_in_thread(app, target, *args):
@@ -217,12 +217,21 @@ def _infer_resources(workspace):
     return normalized, evidence
 
 
-def _build_configuration(workspace, documents, intelligence):
+def _build_configuration(workspace, documents, intelligence, feedback=None):
     resource_spec, evidence = _infer_resources(workspace)
+    cluster = k8s_client.scheduling_snapshot()
+    cluster_context = {
+        **cluster,
+        "nodes": [{key: node.get(key) for key in (
+            "name", "arch", "os", "node_type", "ready", "unschedulable", "taints",
+            "conditions", "allocatable", "available", "image_failures",
+        )} for node in cluster["nodes"]],
+    }
     generated = paper_agents.run_config_agent(
         documents,
         intelligence,
-        {"resources": _resource_rows(resource_spec), "evidence": evidence},
+        {"resources": _resource_rows(resource_spec), "evidence": evidence, "cluster": cluster_context,
+         "replanning_feedback": feedback or []},
         workspace["mode"],
     )
     return {
@@ -239,6 +248,8 @@ def _build_configuration(workspace, documents, intelligence):
         ],
         "document_intelligence": intelligence,
         "resources": generated["resources"],
+        "execution_scope": generated.get("execution_scope") or {},
+        "cluster_snapshot": cluster_context,
         "workflow_steps": generated["workflow_steps"],
         "analysis_plan": generated["analysis_plan"],
         "assumptions": generated["assumptions"],
@@ -252,17 +263,57 @@ def _build_configuration(workspace, documents, intelligence):
     }
 
 
+def _plan_configuration(workspace, documents, intelligence):
+    feedback = []
+    for attempt in range(1, 4):
+        try:
+            configuration = _build_configuration(workspace, documents, intelligence, feedback)
+        except paper_agents.PaperAgentError as exc:
+            db.add_paper_workspace_event(
+                workspace["id"], "config", "validation_failed", str(exc),
+                data={"attempt": attempt, "diagnostics": exc.diagnostics},
+            )
+            raise
+        # Persist the candidate before validation so failed plans remain inspectable.
+        configuration["planning_attempts"] = list(feedback)
+        db.update_paper_workspace(workspace["id"], config_json=configuration)
+        snapshot = k8s_client.scheduling_snapshot()
+        try:
+            previous = [row for failure in feedback for row in failure["resources"]]
+            if (any(row.get("gpu", 0) for row in previous)
+                    and not any(row.get("gpu", 0) for row in configuration["resources"])
+                    and configuration["execution_scope"].get("kind") not in {"simulation", "subset"}):
+                raise ValueError("不能把 GPU 方案直接降低为 CPU；必须声明有原文依据的模拟或子集实验路径")
+            configuration["preflight"] = k8s_client.preflight_resources(
+                configuration["resources"], snapshot=snapshot,
+                allow_constraint_fallback=True,
+            )
+        except (RuntimeError, ValueError) as exc:
+            failure = {
+                "attempt": attempt, "resources": configuration["resources"],
+                "execution_scope": configuration["execution_scope"],
+                "error": str(exc), "observed_at": snapshot.get("observed_at"),
+            }
+            feedback.append(failure)
+            configuration["planning_attempts"] = list(feedback)
+            configuration["preflight"] = {"status": "failed", "error": str(exc)}
+            db.update_paper_workspace(workspace["id"], config_json=configuration)
+            db.add_paper_workspace_event(
+                workspace["id"], "config", "preflight_failed",
+                f"第 {attempt}/3 轮预检未通过" + ("，结合最新集群状态重新规划" if attempt < 3 else "，停止创建资源"),
+                data=failure,
+            )
+            if attempt == 3:
+                raise RuntimeError(f"经过 3 轮规划仍无可行配置，未创建资源：{exc}") from exc
+            continue
+        db.update_paper_workspace(workspace["id"], config_json=configuration)
+        return configuration
+
+
 def _align_configuration_runtime(configuration, program):
     runtime_image = program["runtime"]["image"]
     changes = []
     for resource in configuration["resources"]:
-        if int(resource.get("gpu") or 0) > 0:
-            changes.append({
-                "tier": resource["tier"],
-                "kept_image": resource["image"],
-                "reason": "GPU Unit 使用集群 GPU 镜像，运行时需提供 Python 3.11",
-            })
-            continue
         original = resource["image"]
         resource["image"] = runtime_image
         if original != runtime_image:
@@ -301,6 +352,13 @@ def _persist_generated_program(workspace_id, user_id, internal_files, program):
 
 
 def _schedule(user, experiment_id, configuration, workspace_id, task_id):
+    # Architecture, GPU and an explicitly named host remain hard constraints.
+    # The scheduler may only retry a different node type when the requested tier
+    # cannot accept the Unit, which makes the fallback visible in placement data.
+    preflight = k8s_client.preflight_resources(
+        configuration["resources"], allow_constraint_fallback=True
+    )
+    db.add_paper_workspace_event(workspace_id, "schedule", "preflight", "整批资源通过集群实时预检", data=preflight)
     requested = sum(row["count"] for row in configuration["resources"])
     created = []
     completed = 0
@@ -358,6 +416,7 @@ def _schedule(user, experiment_id, configuration, workspace_id, task_id):
         "requested": requested,
         "created": len(created),
         "placements": created,
+        "preflight": preflight,
         "resources_retained": True,
     }
 
@@ -374,6 +433,12 @@ def _wait_for_pod_ready(pod_name, timeout=120):
         )
         if ready:
             return status
+        for container in containers:
+            if container.get("reason") in {"ErrImagePull", "ImagePullBackOff", "InvalidImageName", "CreateContainerConfigError", "CrashLoopBackOff"}:
+                raise RuntimeError(f"Unit {pod_name}: {container.get('reason')}: {container.get('message', '')}")
+        for condition in status.get("conditions") or []:
+            if condition.get("type") == "PodScheduled" and condition.get("status") == "False":
+                raise RuntimeError(f"Unit {pod_name} 调度失败：{condition.get('message') or condition.get('reason')}")
         if phase in {"Failed", "Succeeded"}:
             raise RuntimeError(f"Unit {pod_name} 无法执行代码，Pod 状态为 {phase}")
         last_status = status
@@ -576,13 +641,14 @@ def start_workspace_job(app, workspace, user, source_ip):
         "paper",
         workspace["name"],
         "等待文档理解 Agent 读取正文",
-        {"workspace_id": workspace["id"], "mode": workspace["mode"]},
+        {"workspace_id": workspace["id"], "mode": workspace["mode"], "llm_profile": user.get("llm_profile", "default")},
     )
     task_events.publish_task(task["id"])
     _run_in_thread(app, _execute_workspace, workspace["id"], task["id"], user, source_ip)
     return task
 
 
+@model_settings.task_model
 def _execute_workspace(workspace_id, task_id, user, source_ip):
     _task_update(task_id, started_at=int(time.time()))
     try:
@@ -617,9 +683,9 @@ def _execute_workspace(workspace_id, task_id, user, source_ip):
             data={key: value for key, value in intelligence.items() if key != "agent_trace"},
         )
 
-        _advance(workspace_id, task_id, "config", "配置 Agent 正在根据正文与解析证据形成配置", 20, event_type="agent_started")
+        _advance(workspace_id, task_id, "config", "配置 Agent 正在结合正文和集群实时资源形成配置", 20, event_type="agent_started")
         workspace = db.get_paper_workspace(workspace_id, user_id=user["id"])
-        configuration = _build_configuration(workspace, documents, intelligence)
+        configuration = _plan_configuration(workspace, documents, intelligence)
         if not configuration["resources"]:
             raise ValueError("至少需要一项云、边或端资源")
         inferred_spec = {
@@ -635,7 +701,7 @@ def _execute_workspace(workspace_id, task_id, user, source_ip):
             workspace_id,
             task_id,
             "config",
-            "配置 Agent 已生成配置并通过结构校验",
+            "配置 Agent 已生成配置并通过集群资源预检",
             24,
             event_type="agent_completed",
             data={
@@ -643,14 +709,24 @@ def _execute_workspace(workspace_id, task_id, user, source_ip):
                 "workflow_steps": configuration["workflow_steps"],
                 "analysis_plan": configuration["analysis_plan"],
                 "assumptions": configuration["assumptions"],
+                "execution_scope": configuration["execution_scope"],
             },
         )
 
+        _advance(
+            workspace_id, task_id, "schedule",
+            "正在读取现有集群能力并生成落位；必要时仅切换到其他节点类型", 35,
+        )
+        schedule = _schedule(user, workspace["experiment_id"], configuration, workspace_id, task_id)
+        db.update_paper_workspace(workspace_id, schedule_json=schedule)
+        _advance(workspace_id, task_id, "schedule", "资源调度完成，已保留运行实例", 70, data=schedule)
+
+        workspace = db.get_paper_workspace(workspace_id, user_id=user["id"])
         generated_artifact = None
         if workspace["mode"] == "full":
             _advance(
                 workspace_id, task_id, "code",
-                "代码生成 Agent 正在根据正文生成逐 Unit 可执行程序", 25,
+                "资源已全部调度成功，代码生成 Agent 正在生成逐 Unit 可执行程序", 72,
                 event_type="agent_started",
             )
             program = paper_agents.run_code_agent(documents, intelligence, configuration)
@@ -670,7 +746,7 @@ def _execute_workspace(workspace_id, task_id, user, source_ip):
                 task_id,
                 "code",
                 f"代码生成 Agent 已生成 {program['runtime']['filename']} 和 {len(program['runs'])} 项运行计划",
-                30,
+                76,
                 event_type="agent_completed",
                 data={
                     "runtime": program["runtime"],
@@ -678,17 +754,9 @@ def _execute_workspace(workspace_id, task_id, user, source_ip):
                     "expected_observations": program["expected_observations"],
                 },
             )
-
-        _advance(workspace_id, task_id, "schedule", "正在读取现有集群能力并生成落位", 35)
-        schedule = _schedule(user, workspace["experiment_id"], configuration, workspace_id, task_id)
-        db.update_paper_workspace(workspace_id, schedule_json=schedule)
-        _advance(workspace_id, task_id, "schedule", "资源调度完成，已保留运行实例", 70, data=schedule)
-
-        workspace = db.get_paper_workspace(workspace_id, user_id=user["id"])
-        if workspace["mode"] == "full":
             _advance(
                 workspace_id, task_id, "execute",
-                "正在等待 Units 就绪并执行 Agent 生成的程序", 72,
+                "正在等待 Units 就绪并执行 Agent 生成的程序", 78,
                 event_type="started",
             )
             schedule = _execute_generated_program(
@@ -791,13 +859,14 @@ def start_analysis_retry(app, workspace, user, source_ip):
         "paper_analysis",
         f"重新分析 {workspace['name']}",
         "等待重新分析",
-        {"workspace_id": workspace["id"], "retry": workspace.get("retries", 0) + 1},
+        {"workspace_id": workspace["id"], "retry": workspace.get("retries", 0) + 1, "llm_profile": user.get("llm_profile", "default")},
     )
     task_events.publish_task(task["id"])
     _run_in_thread(app, _execute_analysis_retry, workspace["id"], task["id"], user, source_ip)
     return task
 
 
+@model_settings.task_model
 def _execute_analysis_retry(workspace_id, task_id, user, source_ip):
     now = int(time.time())
     _task_update(task_id, status="running", started_at=now)

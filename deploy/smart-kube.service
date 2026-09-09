@@ -1,0 +1,16 @@
+[Unit]
+Description=Smart-Kube core web application
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/smart-kube
+ExecStart=/opt/smart-kube/.venv/bin/python -m backend.app
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

@@ -104,16 +104,19 @@ def create_ssh_container(
     - image（如 ubuntu:20.04 / docker.io/library/ubuntu:20.04）：指定容器镜像
     - arch（amd64/arm64/riscv64/riscv/arm 等）：通过 kubernetes.io/arch 标签调度到匹配架构的节点
     - node_type（cloud/edge/device）：通过 node-type 标签调度到云/边缘/端设备节点
-    - hostname：固定调度到指定节点（主机名），优先级最高
+    - hostname：选择指定节点，仍须满足架构、层级、健康和资源限制
     - arch 与 node_type 可同时指定，取交集（如 riscv64 架构的云节点）
-    - gpu（整数，默认 0）：申请 nvidia.com/gpu 数量。>0 时会自动只调度到装了
-      k8s-device-plugin 的节点，并强制使用 docker.io/nvidia/cuda:11.8.0-runtime-ubuntu20.04
-      镜像（即此时 image 参数会被忽略）。
+    - gpu（整数，默认 0）：以实时剩余 nvidia.com/gpu 为准，NVIDIA 标签不等于可用 GPU。
+      保留显式 image；未指定时使用默认 CUDA 镜像。预检失败不会降低 GPU 或架构要求。
     - 不填任何参数 → 在任意可用节点上用默认镜像创建
     可一次创建多个（count 默认 1，上限 10）。
     """
     count = max(1, min(int(count or 1), 10))
-    gpu = max(0, int(gpu or 0))
+    if count > 1:
+        k8s_client.preflight_resources([{
+            "count": count, "arch": arch, "hostname": hostname, "tier": node_type,
+            "image": image, "cpu": cpu, "memory": memory, "gpu": gpu,
+        }])
     out = []
     for _ in range(count):
         info = k8s_client.create_ssh_pod(

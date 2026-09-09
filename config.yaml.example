@@ -10,11 +10,23 @@ llm:
   model: "gpt-oss:20b"
   temperature: 0.2
 
+llm_providers:
+  deepseek:
+    inherit_default: true  # Only when llm above uses a DeepSeek endpoint
+    models: [deepseek-v4-pro]
+  gateway:
+    api_base: "http://YOUR_GATEWAY_HOST:PORT/v1"
+    api_key: "sk-REPLACE-WITH-GATEWAY-KEY"
+    models: [gpt-5.6-sol, gpt-6-astra, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5]
+    temperature: 0.2
+
 flask:
   secret_key: "please-change-to-a-random-secret"
   host: "0.0.0.0"
   port: 80
   debug: false
+  # 只有明确列出的反向代理可提供 X-Forwarded-For / X-Real-IP。
+  trusted_proxy_ips: []
 
 # 飞书（Lark/Feishu）OAuth2.0 网页授权登录配置
 feishu:

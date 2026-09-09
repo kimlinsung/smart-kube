@@ -1,509 +1,96 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title data-i18n="welcome.title">Cloud-Edge-IoT Multi-Agent Testbed</title>
-<link rel="stylesheet" href="/css/style.css" />
-<style>
-  body {
-    background: #ffffff;
-    color: #111827;
-    min-height: 100vh;
-    font-family: -apple-system, BlinkMacSystemFont, "Inter", "PingFang SC",
-                 "HarmonyOS Sans", "Helvetica Neue", Arial, sans-serif;
-  }
-
-  a { color: #1f3a8a; }
-  a:hover { color: #0f2860; }
-
-  /* ---- 顶栏 ---- */
-  .pub-top {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 16px 40px;
-    max-width: 1280px; margin: 0 auto;
-    border-bottom: 1px solid #e5e7eb;
-  }
-  .pub-brand {
-    display: inline-flex; align-items: center; gap: 12px;
-    font-size: 15px; font-weight: 600; letter-spacing: .3px;
-    color: #111827;
-    text-decoration: none;
-  }
-  .pub-brand-mark {
-    width: 24px; height: 24px;
-    background: #1f3a8a;
-    border: 2px solid #1f3a8a;
-    position: relative;
-    flex-shrink: 0;
-  }
-  .pub-brand-mark::after {
-    content: ""; position: absolute; inset: 4px;
-    border: 1.5px solid #ffffff;
-  }
-
-  .pub-nav { display: flex; gap: 4px; align-items: center; }
-  .pub-nav a {
-    color: #374151; padding: 7px 14px;
-    font-size: 13px;
-    text-decoration: none;
-    border: 1px solid transparent;
-  }
-  .pub-nav a:hover { color: #111827; background: #f3f4f6; }
-  .pub-nav a.cta {
-    background: #1f3a8a;
-    color: #ffffff;
-    border-color: #1f3a8a;
-    font-weight: 500;
-  }
-  .pub-nav a.cta:hover { background: #15306f; border-color: #15306f; color: #fff; }
-
-  /* 语言切换 */
-  .lang-switch {
-    display: inline-flex; align-items: center;
-    margin-left: 6px;
-    border: 1px solid #e5e7eb;
-    font-size: 12px;
-    overflow: hidden;
-  }
-  .lang-switch a {
-    color: #6b7280; text-decoration: none;
-    padding: 5px 10px;
-    border-left: 1px solid #e5e7eb;
-    line-height: 1.1;
-  }
-  .lang-switch a:first-child { border-left: 0; }
-  .lang-switch a.active {
-    color: #ffffff; background: #1f3a8a; font-weight: 600;
-  }
-  .lang-switch a:not(.active):hover { color: #111827; background: #f3f4f6; }
-
-  /* ---- Hero ---- */
-  .hero {
-    max-width: 1280px; margin: 0 auto;
-    padding: 56px 40px 40px;
-    display: grid; grid-template-columns: 1.15fr 1fr; gap: 48px;
-    align-items: center;
-  }
-  .hero-tag {
-    display: inline-flex; align-items: center; gap: 8px;
-    padding: 4px 10px;
-    border: 1px solid #d1d5db;
-    background: #f9fafb;
-    font-size: 12px; color: #374151; letter-spacing: .3px;
-    margin-bottom: 18px;
-  }
-  .hero-tag .dot {
-    width: 6px; height: 6px;
-    background: #047857;
-    display: inline-block;
-  }
-  .hero h1 {
-    font-size: 38px; line-height: 1.2; margin: 0 0 16px;
-    font-weight: 700; letter-spacing: -.3px;
-    color: #0f172a;
-  }
-  .hero h1 .sub-en {
-    display: block; margin-top: 10px;
-    font-size: 15px; font-weight: 500; letter-spacing: .3px;
-    color: #6b7280;
-  }
-  .hero p.lead {
-    font-size: 15px; line-height: 1.8; color: #374151;
-    margin: 0 0 24px; max-width: 600px;
-  }
-  .hero-actions { display: flex; gap: 10px; flex-wrap: wrap; }
-  .btn-hero {
-    display: inline-flex; align-items: center; gap: 8px;
-    padding: 10px 20px; font-size: 14px; font-weight: 500;
-    border: 1px solid #1f3a8a;
-    cursor: pointer; font-family: inherit;
-    text-decoration: none;
-  }
-  .btn-hero.primary {
-    background: #1f3a8a;
-    color: #ffffff;
-  }
-  .btn-hero.primary:hover { background: #15306f; color: #fff; text-decoration: none; }
-  .btn-hero.ghost {
-    background: #ffffff;
-    color: #1f3a8a;
-  }
-  .btn-hero.ghost:hover { background: #eef2ff; text-decoration: none; }
-
-  /* ---- 拓扑示意 ---- */
-  .topo {
-    padding: 22px;
-    background: #ffffff;
-    border: 1px solid #e5e7eb;
-  }
-  .topo-row { display: flex; align-items: center; gap: 14px; }
-  .topo-row + .topo-row { margin-top: 12px; }
-  .topo-label {
-    width: 64px; flex-shrink: 0;
-    font-size: 11px; letter-spacing: 2px; color: #6b7280;
-    text-align: right;
-    font-weight: 600;
-  }
-  .topo-nodes { display: flex; flex: 1; gap: 10px; flex-wrap: wrap; }
-  .topo-node {
-    flex: 1; min-width: 0;
-    padding: 12px 12px;
-    border: 1px solid #d1d5db;
-    background: #f9fafb;
-    display: flex; flex-direction: column; align-items: center; gap: 4px;
-    font-size: 11.5px; color: #4b5563;
-  }
-  .topo-node .n { font-size: 16px; font-weight: 600; color: #111827; }
-  .topo-row.cloud .topo-node { border-color: #bfdbfe; background: #eff6ff; }
-  .topo-row.edge  .topo-node { border-color: #ddd6fe; background: #f5f3ff; }
-  .topo-row.iot   .topo-node { border-color: #fde68a; background: #fffbeb; }
-
-  /* ---- 数据卡 ---- */
-  .metrics {
-    max-width: 1280px; margin: 0 auto;
-    padding: 0 40px 40px;
-    display: grid; grid-template-columns: repeat(4, 1fr); gap: 0;
-  }
-  .metric {
-    background: #ffffff;
-    border: 1px solid #e5e7eb;
-    border-left: 0;
-    padding: 18px 22px;
-  }
-  .metrics .metric:first-child { border-left: 1px solid #e5e7eb; }
-  .metric .v {
-    font-size: 26px; font-weight: 700; color: #0f172a;
-    letter-spacing: -.3px;
-    font-variant-numeric: tabular-nums;
-  }
-  .metric .l {
-    margin-top: 4px;
-    font-size: 12px; color: #6b7280; letter-spacing: .2px;
-  }
-
-  /* ---- 介绍区块 ---- */
-  .section {
-    max-width: 1280px; margin: 0 auto;
-    padding: 28px 40px 36px;
-  }
-  .section-title {
-    font-size: 12px; letter-spacing: 3px; color: #1f3a8a;
-    text-transform: uppercase; margin-bottom: 10px;
-    display: inline-flex; align-items: center; gap: 10px;
-    font-weight: 600;
-  }
-  .section-title::before {
-    content: ""; width: 22px; height: 1px; background: #1f3a8a;
-  }
-  .section-heading {
-    font-size: 24px; font-weight: 600; color: #0f172a;
-    margin: 0 0 8px; letter-spacing: -.2px;
-  }
-  .section-sub {
-    font-size: 14px; color: #4b5563; max-width: 760px;
-    margin: 0 0 24px; line-height: 1.75;
-  }
-  .features {
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 0;
-  }
-  .feature {
-    background: #ffffff;
-    border: 1px solid #e5e7eb;
-    margin-left: -1px;
-    margin-top: -1px;
-    padding: 22px 22px 20px;
-  }
-  .features .feature:first-child { margin-left: 0; }
-  .feature .ico {
-    width: 32px; height: 32px;
-    background: #eef2ff;
-    border: 1px solid #c7d2fe;
-    color: #1f3a8a;
-    display: inline-flex; align-items: center; justify-content: center;
-    margin-bottom: 14px;
-  }
-  .feature .ico svg { width: 18px; height: 18px; }
-  .feature h3 {
-    font-size: 15px; font-weight: 600; color: #0f172a;
-    margin: 0 0 6px;
-  }
-  .feature p {
-    margin: 0; font-size: 13px; line-height: 1.7; color: #4b5563;
-  }
-
-  /* ---- 架构层级介绍 ---- */
-  .layers {
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 0;
-    margin-top: 6px;
-  }
-  .layer {
-    border: 1px solid #e5e7eb;
-    background: #ffffff;
-    padding: 22px 22px 18px;
-    margin-left: -1px;
-    position: relative;
-  }
-  .layers .layer:first-child { margin-left: 0; }
-  .layer::before {
-    content: ""; position: absolute; top: -1px; left: -1px; right: -1px; height: 3px;
-  }
-  .layer.cloud::before { background: #2563eb; }
-  .layer.edge::before  { background: #7c3aed; }
-  .layer.iot::before   { background: #d97706; }
-  .layer .tag {
-    display: inline-block; font-size: 11px; letter-spacing: 2px;
-    color: #374151; padding: 3px 10px;
-    background: #f3f4f6;
-    border: 1px solid #e5e7eb;
-    margin-bottom: 12px;
-    font-weight: 600;
-  }
-  .layer h4 {
-    margin: 0 0 8px; font-size: 16px; font-weight: 600; color: #0f172a;
-  }
-  .layer p {
-    margin: 0 0 14px; font-size: 13px; color: #4b5563; line-height: 1.7;
-  }
-  .layer .stat-line {
-    display: flex; gap: 16px; font-size: 12px; color: #4b5563;
-    padding-top: 12px;
-    border-top: 1px dashed #e5e7eb;
-  }
-  .layer .stat-line b { color: #0f172a; font-size: 14px; font-weight: 600; }
-
-  /* ---- 底部 CTA ---- */
-  .cta-band {
-    max-width: 1280px; margin: 16px auto 0;
-    padding: 28px 32px;
-    background: #f9fafb;
-    border: 1px solid #e5e7eb;
-    display: flex; align-items: center; justify-content: space-between; gap: 20px;
-    flex-wrap: wrap;
-  }
-  .cta-band h3 { margin: 0 0 4px; font-size: 18px; color: #0f172a; font-weight: 600; }
-  .cta-band p { margin: 0; font-size: 13px; color: #4b5563; }
-
-  /* ---- 页脚 ---- */
-  .pub-foot {
-    max-width: 1280px; margin: 48px auto 0; padding: 22px 40px 32px;
-    border-top: 1px solid #e5e7eb;
-    display: flex; justify-content: space-between; align-items: center;
-    font-size: 12px; color: #6b7280; flex-wrap: wrap; gap: 12px;
-  }
-  .pub-foot a { color: #4b5563; }
-  .pub-foot a:hover { color: #1f3a8a; }
-
-  @media (max-width: 980px) {
-    .hero { grid-template-columns: 1fr; padding: 36px 24px 28px; gap: 28px; }
-    .hero h1 { font-size: 30px; }
-    .metrics { grid-template-columns: repeat(2, 1fr); padding: 0 24px 28px; }
-    .metric { margin-left: 0; }
-    .section { padding: 20px 24px 28px; }
-    .features, .layers { grid-template-columns: 1fr; }
-    .feature, .layer { margin-left: 0; }
-    .pub-top { padding: 14px 24px; flex-wrap: wrap; gap: 8px; }
-    .cta-band { padding: 22px; }
-    .pub-foot { padding: 20px 24px 28px; }
-  }
-</style>
-<link rel="stylesheet" href="/css/public.css" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Smart-Kube 端边云论文复现实验平台：从论文理解、异构资源调度到代码执行与证据分析的多 Agent 工作流。">
+  <title>Smart-Kube · 端边云论文复现</title>
+  <link rel="stylesheet" href="/css/welcome.css">
 </head>
-<body class="public-page welcome-page">
-
-<header class="pub-top">
-  <a class="pub-brand" href="/welcome.html">
-    <span class="pub-brand-mark" aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5.5" r="2.25"/><circle cx="5.5" cy="17.5" r="2.25"/><circle cx="18.5" cy="17.5" r="2.25"/><path d="M10.9 7.5 6.6 15.5M13.1 7.5l4.3 8M7.8 17.5h8.4"/><path d="M12 11.2l2.1 1.2v2.4L12 16l-2.1-1.2v-2.4L12 11.2z"/></svg>
-    </span>
-    <span data-i18n="brand">Cloud-Edge-IoT Multi-Agent Testbed</span>
-  </a>
-  <nav class="pub-nav">
-    <a href="/welcome.html" data-i18n="nav.overview">Overview</a>
-    <a href="/devices.html" data-i18n="nav.devices">Devices</a>
-    <a href="/login.html" class="cta" data-i18n="nav.login">Sign In</a>
-    <span class="lang-switch">
-      <a href="#" data-set-lang="en">EN</a>
-      <a href="#" data-set-lang="zh">中</a>
-    </span>
-  </nav>
-</header>
-
-<section class="hero">
-  <div>
-    <span class="hero-tag"><span class="dot"></span><span data-i18n="welcome.hero.tag">Testbed Online · Continuously Running</span></span>
-    <h1>
-      <span data-i18n-html="welcome.hero.title">A Cloud-Edge-IoT Testbed<br/>for Multi-Agent Research</span>
-      <span class="sub-en" data-i18n="welcome.hero.subtitle">Heterogeneous Cloud-Edge-IoT Infrastructure for Multi-Agent Systems</span>
-    </h1>
-    <p class="lead" data-i18n="welcome.hero.lead">
-      Targeting frontiers including multi-agent systems, collaborative inference, edge AI and embodied intelligence, this testbed unifies heterogeneous compute across x86, ARM64 and RISC-V instruction set architectures under a single scheduling plane. It covers cloud-side HPC GPU servers, edge-side AI accelerators and device-side robots / MCUs / IoT hardware, providing an end-to-end environment for reproducible multi-agent experiments.
-    </p>
-    <div class="hero-actions">
-      <a class="btn-hero primary" href="/devices.html">
-        <span data-i18n="welcome.btn.view_devices">View Device Status</span>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
-      </a>
-      <a class="btn-hero ghost" href="/login.html" data-i18n="welcome.btn.login">Sign in to Console</a>
-    </div>
-  </div>
-
-  <div class="topo" aria-hidden="true">
-    <div class="topo-row cloud">
-      <span class="topo-label">CLOUD</span>
-      <div class="topo-nodes">
-        <div class="topo-node"><span class="n" data-metric="cloud_servers">·</span><span data-i18n="welcome.topo.cloud.servers">HPC / GPU Servers</span></div>
-        <div class="topo-node"><span class="n">x86_64</span><span data-i18n="welcome.topo.cloud.isa">Instruction Set</span></div>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/welcome.html"><i data-lucide="layers-3" aria-hidden="true"></i>Smart-Kube<span>RESEARCH</span></a>
+    <nav aria-label="Main navigation">
+      <a href="#workflow" data-copy="navWorkflow">Agent 工作流</a>
+      <a href="/devices.html" data-copy="navDevices">异构设备</a>
+      <button class="language" id="language" type="button" aria-label="Switch language">EN</button>
+      <a class="nav-enter" href="/paper_workspace.html"><span data-copy="navEnter">进入工作区</span><i data-lucide="arrow-up-right" aria-hidden="true"></i></a>
+    </nav>
+  </header>
+  <main>
+    <section class="experience" aria-labelledby="heroTitle">
+      <div class="hero-copy">
+        <p class="eyebrow">PAPER. AGENTS. REAL COMPUTE.</p>
+        <h1 id="heroTitle">Smart-Kube</h1>
+        <h2 data-copy="heroTitle">端边云论文复现</h2>
+        <p class="hero-description" data-copy="heroDescription">让论文中的方法，走向真实的异构计算。</p>
+        <a class="text-link" href="/paper_workspace.html"><span data-copy="start">开始复现实验</span><i data-lucide="arrow-right" aria-hidden="true"></i></a>
       </div>
-    </div>
-    <div class="topo-row edge">
-      <span class="topo-label">EDGE</span>
-      <div class="topo-nodes">
-        <div class="topo-node"><span class="n" data-metric="edge_nodes">·</span><span data-i18n="welcome.topo.edge.nodes">Edge Nodes</span></div>
-        <div class="topo-node"><span class="n">ARM64</span><span data-i18n="welcome.topo.edge.isa">+ RISC-V</span></div>
+      <div class="scene" id="scene" role="img" aria-label="Interactive cloud, edge and device compute architecture">
+        <div class="scene-fallback" id="sceneFallback">
+          <span>DEVICE</span><span>EDGE</span><span>CLOUD</span>
+        </div>
       </div>
-    </div>
-    <div class="topo-row iot">
-      <span class="topo-label">IoT</span>
-      <div class="topo-nodes">
-        <div class="topo-node"><span class="n" data-metric="iot_devices">·</span><span data-i18n="welcome.topo.iot.devices">IoT Devices</span></div>
-        <div class="topo-node"><span class="n" data-i18n="welcome.topo.iot.robot">Robotics</span><span data-i18n="welcome.topo.iot.mcu">MCU / Sensors</span></div>
+      <div class="scene-tools">
+        <button class="icon-button" id="resetView" type="button" title="重置视角 / Reset view" aria-label="Reset view"><i data-lucide="rotate-ccw"></i></button>
+        <button class="icon-button" id="motion" type="button" title="暂停动效 / Pause motion" aria-label="Pause motion" aria-pressed="false"><i data-lucide="pause"></i></button>
       </div>
-    </div>
-  </div>
-</section>
-
-<section class="metrics" id="metrics">
-  <div class="metric"><div class="v" id="m-total">—</div><div class="l" data-i18n="welcome.metric.total">Total Devices</div></div>
-  <div class="metric"><div class="v" id="m-cloud">—</div><div class="l" data-i18n="welcome.metric.cloud">Cloud Nodes</div></div>
-  <div class="metric"><div class="v" id="m-edge">—</div><div class="l" data-i18n="welcome.metric.edge">Edge Nodes</div></div>
-  <div class="metric"><div class="v" id="m-iot">—</div><div class="l" data-i18n="welcome.metric.iot">IoT Devices</div></div>
-</section>
-
-<section class="section">
-  <div class="section-title" data-i18n="welcome.section.cap">CAPABILITIES</div>
-  <h2 class="section-heading" data-i18n="welcome.section.cap.heading">A unified experimental environment built for multi-agent research</h2>
-  <p class="section-sub" data-i18n="welcome.section.cap.sub">
-    The testbed exposes heterogeneous hardware as containerised, schedulable units. Researchers can compose experiments across cloud, edge and device tiers, launch them with a single click, attach via in-browser SSH, upload scripts and orchestrate runs through a conversational agent.
-  </p>
-
-  <div class="features">
-    <div class="feature">
-      <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 12l9 4 9-4"/><path d="M3 17l9 4 9-4"/></svg></div>
-      <h3 data-i18n="welcome.feature.1.title">Unified scheduling for heterogeneous compute</h3>
-      <p data-i18n="welcome.feature.1.desc">A unified scheduling plane orchestrates experiment units across x86, ARM64 and RISC-V instruction sets, with fine-grained allocation of GPU / NPU accelerators.</p>
-    </div>
-    <div class="feature">
-      <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg></div>
-      <h3 data-i18n="welcome.feature.2.title">Multi-agent collaborative experiments</h3>
-      <p data-i18n="welcome.feature.2.desc">First-class support for multi-agent orchestration. Deploy collaborative workloads across cloud-edge-device tiers and validate distributed inference, federated learning and swarm-intelligence paradigms.</p>
-    </div>
-    <div class="feature">
-      <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="14" rx="0"/><path d="M8 20h8M12 18v2"/><path d="M7 9h10M7 13h6"/></svg></div>
-      <h3 data-i18n="welcome.feature.3.title">In-browser Web Shell</h3>
-      <p data-i18n="welcome.feature.3.desc">No local setup required — open an interactive SSH terminal for any experiment unit directly in the browser, with file upload and audited operations out of the box.</p>
-    </div>
-    <div class="feature">
-      <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a4 4 0 0 1-4 4H7l-4 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg></div>
-      <h3 data-i18n="welcome.feature.4.title">Conversational experiment orchestration</h3>
-      <p data-i18n="welcome.feature.4.desc">A built-in agent for operations and experiment orchestration. Drive resource requests, image selection, topology composition and log inspection through natural language.</p>
-    </div>
-    <div class="feature">
-      <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L3 7v6c0 5 4 8 9 9 5-1 9-4 9-9V7l-9-5z"/></svg></div>
-      <h3 data-i18n="welcome.feature.5.title">Multi-tenant isolation and auditing</h3>
-      <p data-i18n="welcome.feature.5.desc">Per-account and per-experiment isolation with full operation auditing. Administrators can cordon / uncordon nodes and manage user authorisation and quotas at a fine granularity.</p>
-    </div>
-    <div class="feature">
-      <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v6H4zM4 14h16v6H4z"/><circle cx="7" cy="7" r="1" fill="currentColor"/><circle cx="7" cy="17" r="1" fill="currentColor"/></svg></div>
-      <h3 data-i18n="welcome.feature.6.title">Embodied intelligence &amp; IoT in the loop</h3>
-      <p data-i18n="welcome.feature.6.desc">Covers ROS mobile robots, depth cameras, MCU sensors and smart-home devices — real device-side hardware for closed-loop embodied and edge-device collaborative experiments.</p>
-    </div>
-  </div>
-</section>
-
-<section class="section">
-  <div class="section-title" data-i18n="welcome.section.arch">ARCHITECTURE</div>
-  <h2 class="section-heading" data-i18n="welcome.section.arch.heading">A three-tier, integrated compute stack</h2>
-  <p class="section-sub" data-i18n="welcome.section.arch.sub">
-    Resources are organised along the canonical cloud-edge-device hierarchy. Each tier complements the others in instruction set, power envelope, latency and functional role, and can be flexibly composed into realistic collaborative topologies.
-  </p>
-  <div class="layers">
-    <div class="layer cloud">
-      <span class="tag" data-i18n="welcome.layer.cloud.tag">CLOUD</span>
-      <h4 data-i18n="welcome.layer.cloud.title">High-performance training &amp; inference</h4>
-      <p data-i18n="welcome.layer.cloud.desc">A cluster of x86_64 HPC GPU servers that hosts large-model training, batch inference and control-plane services, providing a stable central compute foundation.</p>
-      <div class="stat-line">
-        <span><span data-i18n="welcome.layer.cloud.nodes">Nodes</span> <b id="m-cloud-2">—</b></span>
-        <span data-i18n="welcome.layer.cloud.isa">ISA · x86_64</span>
+      <div class="architecture-selector" aria-label="Compute tier">
+        <button type="button" data-tier="0" aria-pressed="false"><span class="tier-dot device"></span>DEVICE <small data-copy="tierDevice">端侧感知</small></button>
+        <button type="button" data-tier="1" aria-pressed="false"><span class="tier-dot edge"></span>EDGE <small data-copy="tierEdge">近端推理</small></button>
+        <button type="button" data-tier="2" aria-pressed="false"><span class="tier-dot cloud"></span>CLOUD <small data-copy="tierCloud">集中计算</small></button>
       </div>
-    </div>
-    <div class="layer edge">
-      <span class="tag" data-i18n="welcome.layer.edge.tag">EDGE</span>
-      <h4 data-i18n="welcome.layer.edge.title">Low-latency accelerator nodes</h4>
-      <p data-i18n="welcome.layer.edge.desc">A multi-architecture edge tier combining NVIDIA Jetson family devices and RISC-V SBCs, spanning ARM64 and RISC-V 64 instruction sets, dedicated to near-field inference and collaborative tasks.</p>
-      <div class="stat-line">
-        <span><span data-i18n="welcome.layer.edge.nodes">Nodes</span> <b id="m-edge-2">—</b></span>
-        <span data-i18n="welcome.layer.edge.isa">ISA · ARM64 / RISC-V</span>
+      <div class="scene-caption" aria-live="polite"><span id="tierDescription" data-copy="tierDefault">从端侧数据到云端计算，在同一个实验中连接方法与证据。</span><small data-copy="concept">架构概念演示 · 非实时集群状态</small></div>
+    </section>
+
+    <section class="workflow-section" id="workflow" aria-labelledby="workflowTitle">
+      <div class="section-heading">
+        <p class="eyebrow">AN AGENTIC RESEARCH WORKFLOW</p>
+        <h2 id="workflowTitle" data-copy="workflowTitle">从一篇论文，到一条证据链。</h2>
+        <p data-copy="workflowDescription">每个 Agent 各司其职。先确认计算资源，再生成程序，最后用实际输出审视复现结果。</p>
       </div>
-    </div>
-    <div class="layer iot">
-      <span class="tag" data-i18n="welcome.layer.iot.tag">IoT</span>
-      <h4 data-i18n="welcome.layer.iot.title">Embodied intelligence &amp; sensing endpoints</h4>
-      <p data-i18n="welcome.layer.iot.desc">Mobile and quadruped robots, depth cameras, MCUs and smart-home devices covering ARM, AVR and MSP430 micro-architectures — a realistic device-side experimentation environment.</p>
-      <div class="stat-line">
-        <span><span data-i18n="welcome.layer.iot.devices">Devices</span> <b id="m-iot-2">—</b></span>
-        <span data-i18n="welcome.layer.iot.kind">Robotics / MCU / Sensors</span>
+      <div class="phase-rail" role="tablist" aria-label="Agent workflow" id="phaseRail"></div>
+      <div class="workflow-detail">
+        <div class="step-number" id="stepNumber" aria-hidden="true">01</div>
+        <div class="step-content" id="stepPanel" role="tabpanel" tabindex="0">
+          <span class="agent-name" id="agentName"></span>
+          <h3 id="stepTitle"></h3>
+          <p id="stepDescription"></p>
+          <div class="evidence"><i data-lucide="file-check-2" aria-hidden="true"></i><span id="stepArtifact"></span></div>
+        </div>
+        <div class="step-controls">
+          <span id="stepCounter">01 / 07</span>
+          <button class="icon-button" id="previousStep" type="button" title="上一阶段 / Previous stage" aria-label="Previous stage"><i data-lucide="arrow-left"></i></button>
+          <button class="icon-button dark" id="playWorkflow" type="button" title="播放流程 / Play workflow" aria-label="Play workflow" aria-pressed="false"><i data-lucide="play"></i></button>
+          <button class="icon-button" id="nextStep" type="button" title="下一阶段 / Next stage" aria-label="Next stage"><i data-lucide="arrow-right"></i></button>
+        </div>
       </div>
-    </div>
-  </div>
-</section>
+      <div class="pipeline" aria-hidden="true"><span>INPUT</span><div><i id="pipelineProgress"></i></div><span>EVIDENCE</span></div>
+    </section>
 
-<section class="section">
-  <div class="cta-band">
-    <div>
-      <h3 data-i18n="welcome.cta.title">Start your multi-agent experiment</h3>
-      <p data-i18n="welcome.cta.desc">Check the live status of available devices, or sign in to the console to compose your own experiment.</p>
-    </div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;">
-      <a class="btn-hero ghost" href="/devices.html" data-i18n="welcome.cta.btn.devices">Device Status Overview</a>
-      <a class="btn-hero primary" href="/login.html">
-        <span data-i18n="welcome.cta.btn.login">Go to Sign-in Page</span>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
-      </a>
-    </div>
-  </div>
-</section>
-
-<footer class="pub-foot">
-  <div data-i18n="foot.copy">© Cloud-Edge-IoT Multi-Agent Testbed · For research and educational use only</div>
-  <div><span data-i18n="foot.account">Account requests:</span> <a href="mailto:cppcan@163.com">cppcan@163.com</a></div>
-</footer>
-
-<script src="/js/i18n.js"></script>
-<script>
-(async function loadMetrics() {
-  try {
-    const r = await fetch('/api/public/devices', { credentials: 'omit' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const data = await r.json();
-    const t = data.totals || {};
-    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-
-    set('m-total', t.all ?? '—');
-    set('m-cloud', t.cloud ?? '—');
-    set('m-edge',  t.edge  ?? '—');
-    set('m-iot',   t.iot   ?? '—');
-    set('m-cloud-2', t.cloud ?? '—');
-    set('m-edge-2',  t.edge  ?? '—');
-    set('m-iot-2',   t.iot   ?? '—');
-
-    document.querySelectorAll('[data-metric="cloud_servers"]').forEach(el => el.textContent = t.cloud ?? '·');
-    document.querySelectorAll('[data-metric="edge_nodes"]').forEach(el => el.textContent = t.edge ?? '·');
-    document.querySelectorAll('[data-metric="iot_devices"]').forEach(el => el.textContent = t.iot ?? '·');
-  } catch (e) {
-    console.warn('metrics load failed:', e);
-  }
-})();
-</script>
+    <section class="research-section" aria-labelledby="researchTitle">
+      <div class="section-heading">
+        <p class="eyebrow">HETEROGENEOUS BY DESIGN</p>
+        <h2 id="researchTitle" data-copy="researchTitle">同一方法，不同计算边界。</h2>
+        <p data-copy="researchDescription">面向端边云协同研究，把工作负载、运行环境与实验记录放在一起。</p>
+      </div>
+      <div class="research-grid">
+        <article><span class="topic-index">01 / COLLABORATIVE INFERENCE</span><h3 data-copy="research1">协同推理</h3><p data-copy="research1Description">探索模型与任务在云、边、端的分配方式，对照实际输出与耗时，检验论文中的协同路径。</p><span class="topic-tag">CLOUD ↔ EDGE ↔ DEVICE</span></article>
+        <article><span class="topic-index">02 / HETEROGENEOUS COMPUTE</span><h3 data-copy="research2">异构计算</h3><p data-copy="research2Description">结合集群中就绪节点的架构、GPU、内存与容量规划实验。硬件约束可核验，调度回退有记录。</p><span class="topic-tag">x86_64 · ARM64 · RISC-V</span></article>
+        <article><span class="topic-index">03 / REPRODUCIBLE EVIDENCE</span><h3 data-copy="research3">可追溯复现</h3><p data-copy="research3Description">保留原始输入、生成代码、运行输出与分析报告。复现范围与局限显式记录，结果以真实执行证据为依据。</p><span class="topic-tag">SOURCE → RUN → REPORT</span></article>
+      </div>
+    </section>
+    <section class="closing">
+      <p class="eyebrow">YOUR NEXT EXPERIMENT</p>
+      <h2 data-copy="closingTitle">让研究，继续向前。</h2>
+      <p data-copy="closingDescription">上传论文或实验材料，开启你的端边云复现工作区。</p>
+      <a class="primary-link" href="/paper_workspace.html"><span data-copy="start">开始复现实验</span><i data-lucide="arrow-up-right" aria-hidden="true"></i></a>
+      <a class="text-link secondary-link" href="/devices.html" data-copy="browseDevices">浏览设备清单</a>
+    </section>
+  </main>
+  <footer><span>Smart-Kube · Cloud–Edge–IoT</span><span data-copy="footer">为科研与教学而构建</span><a href="mailto:cppcan@163.com">cppcan@163.com</a></footer>
+  <script src="/js/i18n.js"></script>
+  <script src="/vendor/lucide.min.js"></script>
+  <script src="/js/welcome.js"></script>
 </body>
 </html>

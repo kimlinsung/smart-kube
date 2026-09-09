@@ -839,3 +839,22 @@ body > .assistant.open { transform: translateX(0); }
 ::-webkit-scrollbar-thumb { background: #cdd3de; border-radius: 7px; border: 3px solid transparent; background-clip: padding-box; }
 ::-webkit-scrollbar-thumb:hover { background: #b3bac8; background-clip: padding-box; border: 3px solid transparent; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+.model-picker { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; color: var(--muted); }
+.model-picker select { width: 178px; max-width: 100%; min-width: 0; height: 34px; padding: 4px 24px 4px 8px; font-size: 12px; }
+.assistant-model-picker { margin-bottom: 10px; }
+.assistant-model-picker select { flex: 1; width: auto; }
+.resource-select-cell { width: 40px; min-width: 40px; text-align: center; }
+.resource-select-cell input { width: 16px; height: 16px; margin: 0; cursor: pointer; accent-color: var(--primary); }
+.resource-batch-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; }
+.resource-batch-actions[hidden] { display: none; }
+.resource-batch-actions .batch-result { color: var(--muted); overflow-wrap: anywhere; }
+.card-head:has(.resource-batch-actions) { flex-wrap: wrap; gap: 12px; }
+.card-head:has(.resource-batch-actions) h2 { min-width: 0; }
+@media (max-width: 600px) {
+    .topbar { height: auto; min-height: 64px; flex-wrap: wrap; gap: 8px; padding: 12px 16px; }
+    .topbar .tb-right { width: 100%; justify-content: space-between; }
+    .topbar .model-picker { flex: 1; }
+    .topbar .model-picker select { width: 165px; }
+    .resource-batch-actions { width: 100%; }
+}

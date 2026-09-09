@@ -26,8 +26,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 
-from . import db, tools as tools_mod
-from .config import LLM_CONF
+from . import db, model_settings, tools as tools_mod
 
 log = logging.getLogger(__name__)
 
@@ -43,11 +42,12 @@ SYSTEM_PROMPT = (
     "  未打标签的节点默认视为 edge\n"
     "- hostname：固定调度到指定节点（主机名）\n"
     "- image：容器镜像，如 ubuntu:20.04 或 docker.io/library/ubuntu:20.04\n"
-    "- gpu：申请的 nvidia.com/gpu 数量（整数，默认 0）。当用户提到 GPU/显卡/cuda/nvidia 等\n"
-    "  关键字时必须带上 gpu 参数（未明示数量时按 1 处理）。集群中部分节点装有\n"
-    "  k8s-device-plugin，调度器会自动选择有可用 GPU 的节点；gpu>0 时容器镜像会被\n"
-    "  强制设置为 docker.io/nvidia/cuda:11.8.0-runtime-ubuntu20.04，此时不要再传 image。\n"
-    "arch 与 node_type 可同时指定（取交集），hostname 优先级最高。"
+    "- gpu：申请的 nvidia.com/gpu 数量（整数，默认 0）。用户明确要求 GPU/CUDA 运行时\n"
+    "  带上 gpu 参数（未明示数量时按 1 处理），背景描述或 NVIDIA 标签不代表 GPU 需求或可用性。\n"
+    "  工具会检查实时剩余 GPU、CPU、内存、节点健康、污点、配额及已知镜像故障。\n"
+    "  GPU 镜像可显式指定；未指定才使用默认 CUDA 镜像，Jetson/ARM 需要兼容运行环境。\n"
+    "  预检失败时解释具体限制，不得把 GPU 改成 0 或擅自换架构、层级后重试。\n"
+    "arch、node_type、hostname 同时指定时取交集。"
     "所有参数均有默认值，不需要用户补充也能执行。"
     "如果用户上传了 Python 代码并要求执行，请使用 run_uploaded_python 工具。"
     "管理员才可以查看/删除集群节点。所有回答使用简体中文。"
@@ -61,23 +61,25 @@ class AgentState(TypedDict):
 _GRAPH_CACHE = {}
 
 
-def _make_llm():
+def _make_llm(user=None):
+    conf = model_settings.config_for(user)
     return ChatOpenAI(
-        base_url=LLM_CONF.get("api_base"),
-        api_key=LLM_CONF.get("api_key"),
-        model=LLM_CONF.get("model", "gpt-4o-mini"),
-        temperature=float(LLM_CONF.get("temperature", 0.2)),
+        base_url=conf.get("api_base"),
+        api_key=conf.get("api_key"),
+        model=conf.get("model", "gpt-4o-mini"),
+        temperature=float(conf.get("temperature", 0.2)),
     )
 
 
 def _build_graph(user: dict):
-    """根据用户角色绑定不同工具集。缓存 by role，避免重复构建。"""
+    """Cache the tool graph by role and selected server model profile."""
     role = user.get("role", "user")
-    if role in _GRAPH_CACHE:
-        return _GRAPH_CACHE[role]
+    cache_key = (role, model_settings.resolve(user.get("llm_profile")))
+    if cache_key in _GRAPH_CACHE:
+        return _GRAPH_CACHE[cache_key]
 
     available_tools = tools_mod.tools_for(user)
-    llm = _make_llm().bind_tools(available_tools)
+    llm = _make_llm(user).bind_tools(available_tools)
     tool_node = ToolNode(available_tools)
 
     def call_model(state: AgentState):
@@ -101,7 +103,7 @@ def _build_graph(user: dict):
     g.add_conditional_edges("agent", should_continue, {"tools": "tools", END: END})
     g.add_edge("tools", "agent")
     compiled = g.compile()
-    _GRAPH_CACHE[role] = compiled
+    _GRAPH_CACHE[cache_key] = compiled
     return compiled
 
 
@@ -139,7 +141,7 @@ def chat(
     msgs = _history_to_messages(history[:-1])  # 不重复包含刚刚加进去的当前消息
     msgs.append(HumanMessage(content=user_text))
 
-    api_key = LLM_CONF.get("api_key", "")
+    api_key = model_settings.config_for(user).get("api_key", "")
     if not api_key or api_key.startswith("sk-REPLACE"):
         # LLM 未配置 → 退化到规则解析
         reply = _fallback_chat(user, user_text, uploaded_file)
@@ -241,7 +243,7 @@ def chat_stream(
     msgs = _history_to_messages(history[:-1])
     msgs.append(HumanMessage(content=user_text))
 
-    api_key = LLM_CONF.get("api_key", "")
+    api_key = model_settings.config_for(user).get("api_key", "")
     if not api_key or api_key.startswith("sk-REPLACE"):
         reply = _fallback_chat(user, user_text, uploaded_file)
         db.add_chat(user["id"], "assistant", reply, experiment_id=experiment_id)

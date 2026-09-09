@@ -5,17 +5,47 @@ import os
 import shutil
 import time
 import uuid
+import re
 
 import json
 
 from flask import Blueprint, Response, current_app, jsonify, request, send_file, session, stream_with_context
 from werkzeug.utils import secure_filename
 
-from . import agent, audit, auth, db, jobs, k8s_client, paper_jobs, presence, task_events
+from . import agent, audit, auth, db, jobs, k8s_client, model_settings, paper_jobs, presence, task_events
 from .config import UPLOAD_DIR
 from .request_meta import client_ip
 
 bp = Blueprint("api", __name__, url_prefix="/api")
+
+
+def _model_user(user, data):
+    if not isinstance(data, dict) and not hasattr(data, "to_dict"):
+        raise ValueError("请求必须是对象")
+    profile_id = model_settings.resolve(data.get("llm_profile", user.get("llm_profile")))
+    return {**user, "llm_profile": profile_id}
+
+
+@bp.get("/models")
+@auth.login_required
+def available_models():
+    return jsonify({"models": model_settings.public_profiles(),
+                    "selected": request.current_user.get("llm_profile", "default")})
+
+
+@bp.put("/me/model")
+@auth.login_required
+def update_model_preference():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or "llm_profile" not in data:
+        return jsonify({"error": "请选择模型"}), 400
+    try:
+        profile_id = model_settings.resolve(data["llm_profile"])
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    with db.cursor() as cur:
+        cur.execute("UPDATE users SET llm_profile=? WHERE id=?", (profile_id, request.current_user["id"]))
+    return jsonify({"selected": profile_id})
 
 
 # --------------------------------------------------------------------------------------
@@ -139,13 +169,15 @@ def _current_experiment_id(user: dict) -> int:
     return exp_id
 
 
-def _summarize_experiment(exp: dict) -> dict:
+def _summarize_experiment(exp: dict, counts=None) -> dict:
     """加上 cloud/edge/device pod 数量等汇总字段。"""
-    pods = k8s_client.list_pods_by_experiment(exp["id"])
-    counts = {"cloud": 0, "edge": 0, "device": 0}
-    for p in pods:
-        nt = p.get("node_type") or "edge"
-        counts[nt] = counts.get(nt, 0) + 1
+    if counts is None:
+        pods = k8s_client.list_pods_by_experiment(exp["id"])
+        counts = {"cloud": 0, "edge": 0, "device": 0, "total": 0}
+        for p in pods:
+            nt = p.get("node_type") or "edge"
+            counts[nt] = counts.get(nt, 0) + 1
+            counts["total"] += 1
     return {
         "id": exp["id"],
         "user_id": exp["user_id"],
@@ -156,7 +188,7 @@ def _summarize_experiment(exp: dict) -> dict:
         "cloud_count": counts.get("cloud", 0),
         "edge_count": counts.get("edge", 0),
         "device_count": counts.get("device", 0),
-        "total_count": len(pods),
+        "total_count": counts.get("total", 0),
         "access_role": exp.get("access_role") or "owner",
     }
 
@@ -267,6 +299,28 @@ def delete_resource(pod_name):
         return jsonify({"error": str(e)}), 500
 
 
+@bp.post("/resources/batch-delete")
+@auth.login_required
+def delete_resources_batch():
+    data = request.get_json(silent=True)
+    names = data.get("pod_names") if isinstance(data, dict) else None
+    if not isinstance(names, list) or not 1 <= len(names) <= 100 or any(
+        not isinstance(name, str) or len(name) > 253 or not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", name)
+        for name in names
+    ):
+        return jsonify({"error": "请选择 1 至 100 个有效的资源名称"}), 400
+    user = request.current_user
+    deleted, failed = [], []
+    for name in dict.fromkeys(names):
+        try:
+            k8s_client.delete_pod(name, user)
+            audit.log(user["id"], user["username"], "delete_pod", name)
+            deleted.append(name)
+        except Exception as exc:
+            failed.append({"pod_name": name, "error": str(exc)})
+    return jsonify({"deleted": deleted, "failed": failed, "ok": not failed})
+
+
 @bp.get("/cluster/info")
 @auth.login_required
 def cluster_info():
@@ -296,6 +350,10 @@ def _current_uploaded_path(user, experiment_id):
 def start_chat_task():
     u = request.current_user
     data = request.get_json(force=True) or {}
+    try:
+        u = _model_user(u, data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     text = (data.get("message") or "").strip()
     if not text:
         return jsonify({"error": "消息为空"}), 400
@@ -326,6 +384,10 @@ def execution_tasks():
 def chat():
     u = request.current_user
     data = request.get_json(force=True) or {}
+    try:
+        u = _model_user(u, data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     text = (data.get("message") or "").strip()
     if not text:
         return jsonify({"error": "消息为空"}), 400
@@ -346,6 +408,10 @@ def chat():
 def chat_stream():
     u = request.current_user
     data = request.get_json(force=True) or {}
+    try:
+        u = _model_user(u, data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     text = (data.get("message") or "").strip()
     if not text:
         return jsonify({"error": "消息为空"}), 400
@@ -504,7 +570,7 @@ def run_script(file_id):
 # 论文工作区
 # --------------------------------------------------------------------------------------
 
-def _paper_workspace_payload(workspace, include_resources=True, access_role="owner"):
+def _paper_workspace_payload(workspace, include_resources=True, include_tasks=True, access_role="owner"):
     if not workspace:
         return None
     payload = dict(workspace)
@@ -512,14 +578,15 @@ def _paper_workspace_payload(workspace, include_resources=True, access_role="own
     if access_role == "collaborator":
         payload = _sanitize_value(payload, hide_agent_trace=True)
         payload["access_role"] = access_role
-    tasks = db.list_execution_tasks(
-        workspace["user_id"], experiment_id=workspace["experiment_id"], limit=30
-    )
-    payload["tasks"] = [
-        _sanitize_value(task, hide_agent_trace=True)
-        for task in tasks
-        if task.get("metadata", {}).get("workspace_id") == workspace["id"]
-    ]
+    if include_tasks:
+        tasks = db.list_execution_tasks(
+            workspace["user_id"], experiment_id=workspace["experiment_id"], limit=30
+        )
+        payload["tasks"] = [
+            _sanitize_value(task, hide_agent_trace=True)
+            for task in tasks
+            if task.get("metadata", {}).get("workspace_id") == workspace["id"]
+        ]
     if include_resources:
         try:
             resources = k8s_client.list_pods_by_experiment(workspace["experiment_id"])
@@ -532,6 +599,15 @@ def _paper_workspace_payload(workspace, include_resources=True, access_role="own
             payload["resources"] = []
             payload["resources_available"] = False
     return payload
+
+
+def _paper_workspace_status_payload(workspace, access_role="owner"):
+    """Live-update projection: no Kubernetes read, report, generated code or traces."""
+    if not workspace:
+        return None
+    payload = dict(workspace)
+    payload["access_role"] = access_role
+    return _sanitize_value(payload, hide_agent_trace=True) if access_role == "collaborator" else payload
 
 
 @bp.get("/paper/workspaces")
@@ -554,6 +630,10 @@ def paper_workspaces():
 @auth.login_required
 def create_paper_workspace():
     u = request.current_user
+    try:
+        u = _model_user(u, request.form)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     mode = (request.form.get("mode") or "").strip()
     files = [item for item in request.files.getlist("files") if item and item.filename]
     if mode not in {"resources", "full"}:
@@ -621,6 +701,22 @@ def paper_workspace_detail(workspace_id):
     })
 
 
+@bp.get("/paper/workspaces/<workspace_id>/status")
+@auth.login_required
+def paper_workspace_status(workspace_id):
+    u = request.current_user
+    workspace = db.get_paper_workspace_status(workspace_id)
+    if not workspace:
+        return jsonify({"error": "工作区不存在"}), 404
+    exp = db.get_experiment(workspace["experiment_id"])
+    access_role = _experiment_access(exp, u)
+    if not access_role:
+        return jsonify({"error": "无权查看此工作区"}), 403
+    return jsonify({
+        "workspace": _paper_workspace_status_payload(workspace, access_role=access_role)
+    })
+
+
 def _authorized_workspace_file(workspace_id, file_id, user):
     workspace = db.get_paper_workspace(workspace_id, include_details=False)
     if not workspace:
@@ -682,6 +778,10 @@ def paper_workspace_report(workspace_id):
 @auth.login_required
 def retry_paper_workspace_analysis(workspace_id):
     u = request.current_user
+    try:
+        u = _model_user(u, request.get_json(silent=True) or {})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     workspace = db.get_paper_workspace(workspace_id)
     if not workspace:
         return jsonify({"error": "工作区不存在"}), 404
@@ -833,7 +933,8 @@ def logs():
 def list_experiments():
     u = request.current_user
     exps = db.list_experiments(user_id=None if u["role"] == "admin" else u["id"])
-    items = [_summarize_experiment(e) for e in exps]
+    counts_by_experiment = k8s_client.pod_counts_by_experiment(e["id"] for e in exps)
+    items = [_summarize_experiment(e, counts_by_experiment.get(e["id"], {})) for e in exps]
     return jsonify({
         "experiments": items,
         "current_experiment_id": _current_experiment_id(u),
@@ -851,7 +952,7 @@ def create_experiment():
     session["current_experiment_id"] = exp["id"]
     audit.log(u["id"], u["username"], "create_experiment", f"{exp['id']}:{name}")
     exp["owner_username"] = u["username"]
-    return jsonify(_summarize_experiment(exp))
+    return jsonify(_summarize_experiment(exp, {"cloud": 0, "edge": 0, "device": 0, "total": 0}))
 
 
 @bp.get("/experiments/<int:exp_id>")
@@ -871,9 +972,7 @@ def get_experiment_detail(exp_id):
     for p in pods:
         nt = p.get("node_type") or "edge"
         counts[nt] = counts.get(nt, 0) + 1
-    paper_workspace = db.get_paper_workspace_for_experiment(
-        exp_id,
-    )
+    paper_workspace = db.get_paper_workspace_presentation_for_experiment(exp_id)
     collaborators = db.list_experiment_collaborators(exp_id)
     return jsonify({
         "experiment": {
@@ -893,7 +992,7 @@ def get_experiment_detail(exp_id):
         "is_current": _current_experiment_id(u) == exp_id,
         "access_role": access_role,
         "paper_workspace": _paper_workspace_payload(
-            paper_workspace, include_resources=False, access_role=access_role
+            paper_workspace, include_resources=False, include_tasks=False, access_role=access_role
         ),
     })
 
