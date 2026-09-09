@@ -133,6 +133,11 @@
   document.addEventListener('visibilitychange',() => { if(document.hidden) stopPlayback(); });
   renderCopy();
   setMotion(paused);
+  $('scene').addEventListener('scene:unavailable',()=>{
+    $('sceneFallback').hidden=false;
+    $('motion').disabled=true;
+    $('resetView').disabled=true;
+  });
   import('/js/welcome_scene.js').then(module => {
     sceneApi = module.createScene($('scene'), { onSelect:selectPhase, paused });
     sceneApi.setPhase(phase);

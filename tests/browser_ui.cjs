@@ -10,20 +10,47 @@ const pngPixels = buffer => {
   for(let i=0;i<png.data.length;i+=4) if(Math.min(...png.data.subarray(i,i+3))<170) count++;
   return count/(png.width*png.height);
 };
+const sceneColors = buffer => {
+  const png=PNG.sync.read(buffer), bands=new Set();
+  for(let i=0;i<png.data.length;i+=4) {
+    const [r,g,b]=png.data.subarray(i,i+3), max=Math.max(r,g,b),min=Math.min(r,g,b),delta=max-min;
+    if(delta<45||max<100)continue;
+    const hue=max===r?((g-b)/delta+6)%6:max===g?(b-r)/delta+2:(r-g)/delta+4;
+    bands.add(Math.floor(hue));
+  }
+  return bands.size;
+};
+const checkLabels = async page => {
+  const issues=await page.evaluate(()=>{
+    const scene=document.getElementById('scene').getBoundingClientRect();
+    const rects=[...document.querySelectorAll('.scene-node-label,.scene-hub-label')].map(el=>({name:el.textContent,...el.getBoundingClientRect().toJSON()}));
+    const issues=[];
+    rects.forEach((a,i)=>{
+      if(a.left<scene.left||a.right>scene.right||a.top<scene.top||a.bottom>scene.bottom)issues.push('Clipped: '+a.name);
+      rects.slice(i+1).forEach(b=>{if(a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top)issues.push('Overlap: '+a.name+' / '+b.name);});
+    });
+    return issues;
+  });
+  assert.deepEqual(issues,[]);
+};
 (async()=>{
   const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH || undefined,args:['--use-angle=swiftshader','--enable-unsafe-swiftshader']});
   const errors=[];
   try {
-    for(const width of [1280,390,320,1920]) {
+    for(const width of [1280,390,320,1440,1920]) {
       const page=await browser.newPage({viewport:{width,height:1000}});
       page.on('pageerror',error=>errors.push(error.message));
       await page.route('**/api/public/devices',route=>route.fulfill({json:{totals:{all:30,cloud:6,edge:18,iot:6}}}));
       await page.goto(url+'/welcome.html');
       await page.waitForSelector('#scene canvas');
+      await page.waitForSelector('.scene-node-label');
+      assert.equal(await page.locator('#scene').getAttribute('data-agent-count'),'7');
+      assert.equal(await page.locator('.scene-node-label').count(),7);
       await page.locator('#phase-5').click();
       await page.locator('#scene').scrollIntoViewIfNeeded();
       const before=await page.locator('#scene canvas').screenshot();
       assert(pngPixels(before)>.01,'Blank canvas at '+width);
+      assert(sceneColors(before)>=5,'Missing agent color variety at '+width);
       await page.waitForTimeout(250);
       assert(!before.equals(await page.locator('#scene canvas').screenshot()),'Scene does not move');
       await page.locator('#retryDemo').click();
@@ -40,6 +67,21 @@ const pngPixels = buffer => {
       await page.emulateMedia({reducedMotion:'reduce'});
       await page.waitForFunction(()=>document.getElementById('motion').getAttribute('aria-pressed')==='true');
       assert.equal(await page.locator('#motion').getAttribute('aria-pressed'),'true');
+      await page.locator('#scene').scrollIntoViewIfNeeded();
+      await page.waitForTimeout(150);
+      await checkLabels(page);
+      await page.locator('[data-scene-phase="6"]').click();
+      assert.equal(await page.locator('#scene').getAttribute('data-phase'),'6');
+      await page.mouse.move(0,0);
+      await page.waitForTimeout(150);
+      const still=await page.locator('#scene canvas').screenshot();
+      await page.waitForTimeout(200);
+      assert(still.equals(await page.locator('#scene canvas').screenshot()),'Reduced-motion scene is moving');
+      const label=await page.locator('[data-scene-phase="0"]').boundingBox();
+      const sceneBox=await page.locator('#scene').boundingBox();
+      const worldScale=Math.min(sceneBox.height/(width<700?13.8:9.4),sceneBox.width/(width<700?8.5:15.8));
+      await page.mouse.click(label.x+label.width/2,label.y-worldScale*.9);
+      assert.equal(await page.locator('#scene').getAttribute('data-phase'),'0','Model picking failed');
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'Overflow at '+width);
       await page.locator('#workflow').screenshot({path:output+'/workflow-'+width+'.png'});
       await page.screenshot({path:output+'/page-'+width+'.png',fullPage:true});
@@ -48,8 +90,14 @@ const pngPixels = buffer => {
         const box=await page.locator('#scene').boundingBox();
         await page.mouse.move(box.x+box.width/2,box.y+box.height/2);
         await page.mouse.down(); await page.mouse.move(box.x+box.width/2+80,box.y+box.height/2,{steps:8}); await page.mouse.up();
+        await checkLabels(page);
         await page.locator('#resetView').click();
         assert.equal(await page.locator('#scene').getAttribute('data-phase'),'0');
+        await page.setViewportSize({width:390,height:1000});
+        await page.waitForTimeout(200);
+        await checkLabels(page);
+        await page.setViewportSize({width,height:1000});
+        await page.waitForTimeout(200);
         if(process.env.CAPTURE==='1') {
           for(let i=0;i<7;i++) {
             await page.locator('#phase-'+i).click();
@@ -58,6 +106,11 @@ const pngPixels = buffer => {
           await page.locator('#retryDemo').click();
           await page.locator('#workflow').screenshot({path:output+'/frame-7.png'});
         }
+        await page.locator('#scene canvas').evaluate(canvas=>canvas.getContext('webgl2').getExtension('WEBGL_lose_context').loseContext());
+        await page.waitForFunction(()=>document.getElementById('motion').disabled);
+        assert(await page.locator('#sceneFallback').isVisible());
+        await page.locator('#phase-6').click();
+        assert.match(await page.locator('#stepCounter').innerText(),/07/);
       }
       await page.close();
     }
