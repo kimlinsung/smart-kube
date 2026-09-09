@@ -117,10 +117,10 @@ function renderShell(me) {
                 </span>
             </a>` : '';
         sidebar.innerHTML = `
-            <div class="sidebar-brand">
+            <a class="sidebar-brand" href="/welcome.html" title="返回实验床首页" aria-label="返回实验床首页">
                 ${brandMark()}
-                <span class="brand-text"><span class="t1">智能云边端</span><span class="t2">CLOUD · EDGE · DEVICE</span></span>
-            </div>
+                <span class="brand-text"><span class="t1">云边端实验床</span><span class="t2">RESEARCH TESTBED</span></span>
+            </a>
             <div class="sidebar-section">导航</div>
             <nav class="sidebar-nav">${navItems}</nav>
             <div class="sidebar-spacer"></div>
@@ -263,6 +263,27 @@ const ModelSettings = {
             select.value = this.selected;
             select.disabled = !!this.saving;
             select.onchange = () => this.change(select.value);
+            let menu = select.parentElement.querySelector('.model-menu');
+            if (!menu) {
+                menu = document.createElement('details'); menu.className = 'model-menu';
+                select.parentElement.appendChild(menu);
+                select.classList.add('model-native');
+                select.tabIndex = -1;
+                select.setAttribute('aria-hidden', 'true');
+                menu.addEventListener('keydown', event => {
+                    if (event.key === 'Escape') { menu.open = false; menu.querySelector('summary').focus(); }
+                    if (['ArrowDown', 'ArrowUp'].includes(event.key)) {
+                        event.preventDefault(); menu.open = true;
+                        const options = [...menu.querySelectorAll('button:not(:disabled)')];
+                        const index = options.indexOf(document.activeElement);
+                        options[(index + (event.key === 'ArrowDown' ? 1 : options.length - 1)) % options.length]?.focus();
+                    }
+                });
+                document.addEventListener('click', event => { if (!menu.contains(event.target)) menu.open = false; });
+            }
+            const current = this.options.find(option => option.id === this.selected);
+            menu.innerHTML = `<summary aria-label="选择大模型"><span class="model-symbol">${icon('sparkle')}</span><span class="model-current"><small>RESEARCH MODEL</small><b>${escapeHtml(current?.label || current?.name || this.selected)}</b></span>${icon('caret')}</summary><div class="model-options" role="listbox" aria-label="可用模型">${this.options.map(option => `<button type="button" role="option" aria-selected="${option.id === this.selected}" data-model-id="${escapeHtml(option.id)}" ${option.available === false || this.saving ? 'disabled' : ''}><span>${escapeHtml(option.label || option.name || option.id)}<small>${option.available === false ? '暂不可用' : '可用'}</small></span>${option.id === this.selected ? icon('check') : ''}</button>`).join('')}</div>`;
+            menu.querySelectorAll('[data-model-id]').forEach(button => { button.onclick = () => { menu.open = false; this.change(button.dataset.modelId); }; });
         });
     },
     async change(value) {

@@ -78,6 +78,20 @@ class ProjectLifecycleTest(unittest.TestCase):
         self.assertEqual(self.client.delete(f"/api/experiments/{self.exp['id']}").status_code, 200)
         self.assertFalse(os.path.exists(path))
 
+    def test_migrated_archive_can_be_previewed_and_deleted(self):
+        workspace, directory = self.workspace()
+        path = os.path.join(directory, 'input.txt')
+        with open(path, 'w') as handle:
+            handle.write('migrated evidence')
+        legacy = '/home/ubuntu/smart-kube/uploads/' + os.path.relpath(path, self.temp.name)
+        item = db.add_paper_workspace_file(workspace['id'], self.user['id'], 'input.txt', legacy, 17, 'text/plain')
+        with mock.patch('backend.archive_paths.UPLOAD_DIR', self.temp.name):
+            result = self.client.get(f"/api/paper/workspaces/{workspace['id']}/files/{item['id']}/content")
+        self.assertEqual(result.status_code, 200)
+        response = self.client.delete('/api/paper/workspaces/' + workspace['id'])
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(os.path.exists(directory))
+
     def test_running_job_blocks_deletion_without_cleanup(self):
         self.workspace()
         db.create_execution_task(self.user["id"], self.exp["id"], "chat", "running")

@@ -13,18 +13,19 @@ export function createScene(container, {onSelect, paused = false}) {
   const light = new THREE.DirectionalLight(0xffffff, 3);
   light.position.set(-3, 8, 7); scene.add(light);
   const mobile = container.clientWidth < 700;
-  const positions = mobile ? [[-2.7,2.8],[0,2.8],[2.7,2.8],[2.7,0],[0,0],[-2.7,0],[-2.7,-2.8]] : [[-4.5,1.2],[-1.5,1.2],[1.5,1.2],[4.5,1.2],[4.5,-1.7],[1.5,-1.7],[-1.5,-1.7]];
+  const positions = mobile ? [[-2.6,3.3],[.3,3.3],[2.9,1.6],[2.8,-1.1],[1.5,-3.4],[-1.5,-3.4],[-2.8,-.5]] : [[-4.4,1.8],[-1.4,2.7],[2,2.6],[4.7,.4],[2.6,-2.2],[-.8,-2.6],[-4.3,-1.4]];
   const nodes = [], labels = [], links = [], packets = [];
   let phase = 0, retry = false, visible = true, elapsed = 0;
-  function label(text, index) {
+  function label(text, index, point) {
     const canvas = document.createElement('canvas'); canvas.width=512; canvas.height=128;
     const ctx = canvas.getContext('2d');
     ctx.fillStyle='#142b63'; ctx.textAlign='center'; ctx.font='600 48px system-ui';
-    ctx.fillText(text,256,62);
+    ctx.fillText(text,256,62,490);
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace=THREE.SRGBColorSpace;
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({map:texture, depthTest:false}));
-    sprite.position.set(positions[index][0], positions[index][1]-.8, .3);
+    const pos=point||positions[index];
+    sprite.position.set(pos[0], pos[1]-.8, .3);
     sprite.scale.set(2.6,.65,1); graph.add(sprite); return sprite;
   }
   positions.forEach(([x,y],i) => {
@@ -36,20 +37,23 @@ export function createScene(container, {onSelect, paused = false}) {
     ring.position.set(x,y,.17); graph.add(ring);
     labels.push(label(['01 Understand','02 Plan','03 Schedule','04 Generate','05 Execute','06 Analyze','07 Report'][i],i));
   });
+  const coordinator=new THREE.Mesh(new THREE.CylinderGeometry(.82,.92,.4,8),new THREE.MeshStandardMaterial({color:0x368b73,metalness:.5,roughness:.24}));
+  coordinator.rotation.x=Math.PI/2;coordinator.position.z=.15;graph.add(coordinator);
+  const coordinatorLabel=label('ORCHESTRATOR',0,[0,-.15]);
+  coordinatorLabel.scale.set(2.8,.7,1);
   function connection(points, isRetry=false) {
     const curve = new THREE.CatmullRomCurve3(points.map(p=>new THREE.Vector3(...p)));
     const material = new THREE.MeshStandardMaterial({color:isRetry ? 0xd89017 : 0xa9bad0, roughness:.4});
     const mesh = new THREE.Mesh(new THREE.TubeGeometry(curve,64,.026,8,false),material);
     graph.add(mesh);
     const packet = new THREE.Mesh(new THREE.OctahedronGeometry(.1),new THREE.MeshBasicMaterial({color:isRetry ? 0xd89017 : 0x13a474}));
-    graph.add(packet); packets.push({mesh:packet,curve,isRetry}); links.push(mesh);
+    graph.add(packet); packets.push({mesh:packet,curve,isRetry}); links.push(mesh);return mesh;
   }
-  positions.slice(0,-1).forEach(([x,y],i) => {
-    const [nx,ny]=positions[i+1];
-    connection(x === nx ? [[x,y,0],[x+1.1,y-.15,.12],[nx+1.1,ny+.2,.12],[nx,ny,0]] : [[x,y,0],[(x+nx)/2,(y+ny)/2,.12],[nx,ny,0]]);
+  positions.forEach(([x,y],i) => {
+    connection([[0,0,.05],[x*.45,y*.55,.25],[x,y,0]]);
   });
   const [sx,sy]=positions[2], [px,py]=positions[1];
-  connection([[sx,sy,0],[sx,sy+1.2,.3],[px,py+1.2,.3],[px,py,0]],true);
+  const retryLink=connection([[sx,sy,0],[sx,sy+.9,.3],[px,py+.9,.3],[px,py,0]],true);
   const raycaster=new THREE.Raycaster(),pointer=new THREE.Vector2();
   let down=null;
   renderer.domElement.addEventListener('pointerdown',event=>{down={x:event.clientX,y:event.clientY,rotation:graph.rotation.y};});
@@ -69,8 +73,9 @@ export function createScene(container, {onSelect, paused = false}) {
   function resize() {
     const width=container.clientWidth,height=container.clientHeight;
     renderer.setSize(width,height); camera.aspect=width/height;
-    const distance=Math.max(mobile ? 14 : 10, (mobile ? 8.6 : 11.7)/(2*Math.tan(THREE.MathUtils.degToRad(17))*camera.aspect));
-    camera.position.set(0,.7,distance); camera.lookAt(0,.2,0); camera.updateProjectionMatrix();
+    const tangent=2*Math.tan(THREE.MathUtils.degToRad(17));
+    const distance=Math.max((mobile?10:8.2)/tangent,(mobile?9:13.4)/(tangent*camera.aspect));
+    camera.position.set(0,-.35,distance); camera.lookAt(0,-.35,0); camera.updateProjectionMatrix();
   }
   const observer=new ResizeObserver(resize); observer.observe(container); resize();
   const intersection=new IntersectionObserver(entries=>{visible=entries[0].isIntersecting;}); intersection.observe(container);
@@ -83,7 +88,8 @@ export function createScene(container, {onSelect, paused = false}) {
       node.material.color.setHex(i===phase ? (retry ? 0xd89017 : 0x315fc9) : i<phase ? 0x13a474 : 0xcbd7e4);
       node.position.z=i===phase ? .1+Math.sin(elapsed*2)*.045 : 0;
     });
-    links[6].visible=retry;
+    retryLink.visible=retry;
+    coordinator.rotation.z=Math.sin(elapsed*.5)*.04;
     packets.forEach(({mesh,curve,isRetry},i)=>{
       mesh.visible=isRetry ? retry : !retry && i<phase;
       mesh.position.copy(curve.getPointAt((elapsed*.3+i*.15)%1));

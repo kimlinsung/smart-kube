@@ -33,8 +33,10 @@
 
 <script src="/js/api.js"></script>
 <script src="/js/app.js"></script>
+<script src="/js/inventory_view.js"></script>
 <script src="/js/chat.js"></script>
 <script>
+const inventory = createInventoryView('podsBody', 'units');
 async function loadAllPods(silent = false) {
     const body = document.getElementById('podsBody');
     if (!silent) body.innerHTML = '<tr class="loading-row"><td colspan="8"><span class="spinner"></span> 加载中…</td></tr>';
@@ -45,6 +47,7 @@ async function loadAllPods(silent = false) {
         if (!r.pods.length) {
             body.innerHTML = '<tr><td colspan="8"><div class="empty-state"><div class="t">暂无 Units</div></div></td></tr>';
             batchSelection.refresh();
+            inventory.update(r.pods);
             return;
         }
         groupByNodeType(r.pods).forEach(({ type, items }) => {
@@ -65,6 +68,7 @@ async function loadAllPods(silent = false) {
         });
         bindPhaseHover(body);
         batchSelection.refresh();
+        inventory.update(r.pods);
     } catch (e) {
         if (!silent) body.innerHTML = `<tr><td colspan="8" style="color:var(--danger)">${escapeHtml(e.message)}</td></tr>`;
     }

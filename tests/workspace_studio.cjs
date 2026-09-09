@@ -8,9 +8,11 @@ const now=Math.floor(Date.now()/1000);
 const events=[
  ['intake','agent_started','文档理解 Agent 开始提取论文正文'],
  ['intake','agent_completed','已提取目标、方法与验收依据'],
+ ['config','agent_called','编排 Agent 委派配置规划',{from:'orchestrator',to:'config',case_id:'experiment-1'}],
  ['config','agent_started','结合实时集群容量规划配置'],
  ['config','preflight_failed','第 1/3 轮资源预检未通过，重新规划',{attempt:1}],
  ['config','agent_completed','调整资源配置后通过预检'],
+ ['config','agent_returned','配置 Agent 返回资源计划',{from:'config',to:'orchestrator',case_id:'experiment-1'}],
  ['schedule','preflight','整批资源通过集群实时预检'],
  ['schedule','placement','unit-01 已落位到 node104，放宽 node-type',{scheduling:{relaxed:['node_type']}}],
  ['code','agent_started','根据已落位资源生成 Python 代码'],
@@ -37,6 +39,12 @@ const workspace={id,experiment_id:11,user_id:1,name:'端边云协同推理 · �
   config_json:{resources:[{tier:'cloud',arch:'amd64',gpu:1,count:2}],generated_program:{runtime:{language:'python',version:'3.11',image:'python:3.11'},code:'import time\nstart = time.perf_counter()\nprint({"latency": time.perf_counter() - start})',runs:[{},{}]}},
   schedule_json:{created:2,requested:2,placements:[{pod_name:'unit-01',node:'node104',node_type:'edge',arch:'amd64',scheduling:{relaxed:['node_type']}},{pod_name:'unit-02',node:'node106',node_type:'cloud',arch:'amd64'}],executions:[{pod_name:'unit-01',node:'node104',status:'succeeded',stdout:'{"latency":1.25}',exit_code:0,duration_seconds:1.25},{pod_name:'unit-02',node:'node106',status:'timed_out',stderr:'Inference timeout',exit_code:124,duration_seconds:30}]},
   analysis_json:{checks:[{name:'执行证据',passed:true},{name:'延迟验收',passed:false}],verdict:'needs_attention'},report_md:'# Reproduction report\n\nOne successful run; one timeout.',tasks:[]};
+workspace.config_json.suite = [
+ {id:'experiment-1',title:'协同推理延迟',goal:'对照论文主实验的端到端延迟',source_quote:'Inference latency is measured end to end.',paper_findings:['论文主实验：端到端延迟'],acceptance_criteria:['相同口径的延迟对照'],status:'completed'},
+ {id:'experiment-2',title:'异构节点扩展性',goal:'对比不同数量节点的吞吐',paper_findings:['论文扩展性实验'],acceptance_criteria:['吞吐对照'],status:'failed'},
+ {id:'experiment-3',title:'调度策略消融',goal:'评估协同策略对结果的影响',paper_findings:[],acceptance_criteria:['基线对照'],status:'skipped'},
+];
+workspace.comparison_report_md = '# 实验对比报告\n\n## 协同推理延迟\n\n条件不一致，不能直接比较。\n\n## 异构节点扩展性\n\n执行失败，未验证。\n\n## 调度策略消融\n\n未执行。';
 (async()=>{
  const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||undefined,args:['--use-angle=swiftshader','--enable-unsafe-swiftshader']});const errors=[];
  try {
@@ -55,14 +63,18 @@ const workspace={id,experiment_id:11,user_id:1,name:'端边云协同推理 · �
    await page.route('**/docs-image.png',route=>route.fulfill({path:'docs/assets/smart-kube-cover.png',contentType:'image/png'}));
    if(process.env.PDF_PREVIEW_PATH)await page.route('**/preview-fixture.pdf',route=>route.fulfill({path:process.env.PDF_PREVIEW_PATH,contentType:'application/pdf'}));
    await page.goto(base+'/paper_workspace.html');
-   await page.waitForFunction(()=>document.getElementById('workflowGraph').dataset.nodeCount==='9');
+   await page.waitForFunction(()=>document.getElementById('workflowGraph').dataset.nodeCount==='11');
    assert.equal(await page.locator('#workflowGraph').getAttribute('data-retry-count'),'3');
+   assert.equal(await page.locator('.experiment-ticket').count(),3);
+   await page.locator('.experiment-ticket').first().click();
+   assert.match(await page.locator('#inspectorBody').innerText(),/论文原文/);
+   await page.locator('.experiment-ticket').first().click();
    await page.locator('[data-flow-stage="code"]').click();
    assert.equal(await page.locator('#stageInspector h3').innerText(),'代码生成');
    await page.locator('#flowZoomIn').click();await page.locator('#flowFit').click();
    await page.locator('#flowFocus').click();assert(await page.locator('#flowStudio').evaluate(e=>e.classList.contains('flow-focused')));
    await page.keyboard.press('Escape');
-   await page.locator('#flowTimeline').fill('3');
+   await page.locator('#flowTimeline').fill(String(events.findIndex(event=>event.event_type==='preflight_failed')));
    assert.match(await page.locator('#flowEventCaption').innerText(),/预检未通过/);
    await page.locator('#flowLive').click();
    await page.locator('[data-panel="events"]').click();
@@ -70,6 +82,10 @@ const workspace={id,experiment_id:11,user_id:1,name:'端边云协同推理 · �
    assert.match(await page.locator('#workspaceEvents').innerText(),/超时/);
    assert(!(await page.locator('#workspaceEvents').innerText()).includes('node104 执行成功'));
    await page.locator('[data-panel="telemetry"]').click();
+   await page.locator('[data-tab="comparison"]').click();
+   assert.match(await page.locator('#inspectorBody').innerText(),/不能直接比较/);
+   assert.match(await page.locator('#downloadReport').getAttribute('href'),/kind=comparison/);
+   await page.locator('[data-tab="config"]').click();
    await page.locator('#flowStudio').screenshot({path:output+'/flow-'+width+'.png'});
    await page.screenshot({path:output+'/workspace-'+width+'.png',fullPage:true});
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'overflow '+width);

@@ -3,7 +3,7 @@
   const copy = {
     zh: {
       navWorkflow:'Agent 工作流',navDevices:'异构设备',navEnter:'进入工作区',
-      heroTitle:'端边云论文复现',heroDescription:'让论文中的方法，走向真实的异构计算。',start:'开始复现实验',
+      heroTitle:'云边端多智能体实验床',heroDescription:'让论文中的方法，走向真实的异构计算。',start:'开始复现实验',
       tierDevice:'端侧感知',tierEdge:'近端推理',tierCloud:'集中计算',
       tierDefault:'从端侧数据到云端计算，在同一个实验中连接方法与证据。',
       concept:'架构概念演示 · 非实时集群状态',
@@ -20,16 +20,16 @@
       phases:[
         ['文档理解','DOCUMENT AGENT','读懂方法，也读懂边界。','从论文与输入材料中提取实验目标、方法步骤和验收依据。记录假设与缺失信息，明确本次复现的范围。','产物：实验目标 · 文档证据 · 范围与假设'],
         ['配置规划','CONFIGURATION AGENT','把研究问题，映射到资源。','结合文档证据与集群实时能力，规划架构、镜像、CPU、内存与 GPU 请求。配置不满足预检时，携带诊断重新规划。','产物：资源配置 · 运行环境 · 预检诊断'],
-        ['资源调度','KUBERNETES SCHEDULING','先找到算力，再开始生成。','先尝试满足条件的就绪节点；必要时放宽节点类型，尝试其他可用节点。架构、GPU 等硬约束保留，全部资源调度成功后再进入代码生成。','产物：节点落位 · 资源实例 · 回退记录'],
+        ['资源调度','RESOURCE AGENT','先找到算力，再开始生成。','先尝试满足条件的就绪节点；必要时尝试其他可用节点。架构、GPU 等硬约束保留，为最多三个实验准备峰值资源池，全部资源就绪后再进入代码生成。','产物：峰值资源池 · 资源实例 · 回退记录'],
         ['代码生成','CODE AGENT','让方法，成为可执行程序。','在调度成功后，根据正文与资源配置生成 Python 程序及逐 Unit 运行计划。代码作为工作区产物保存，支持预览与下载。','产物：生成代码 · 运行参数 · 预期观测'],
         ['真实执行','EXECUTION ENGINE','在容器里运行，在输出中求证。','等待运行实例就绪，上传并执行程序。收集标准输出、错误输出、退出码与实际耗时，保留失败和超时证据。','产物：运行输出 · 退出状态 · 实测耗时'],
         ['证据分析','ANALYSIS AGENT','让结论，接受证据检验。','分析 Agent 对照实验目标与真实运行输出，检查结果、识别风险并提出后续建议。执行成功不等同于科学结论被完整复现。','产物：检查结果 · 风险与局限 · 后续建议'],
-        ['报告归档','REPORT AGENT','留下可继续研究的现场。','汇总输入、配置、调度、代码与执行证据，形成可下载的实验报告。资源由用户决定回收，实验产物可继续保留。','产物：Markdown 报告 · 完整实验档案']
+        ['报告归档','REPORT AGENTS','留下可继续研究的现场。','编排 Agent 汇总最多三个实验的执行证据，分别输出过程报告与实验对比报告。失败立即回收计算资源，输入与证据仍保留。','产物：过程报告 · 实验对比报告']
       ]
     },
     en: {
       navWorkflow:'Agent workflow',navDevices:'Devices',navEnter:'Workspace',
-      heroTitle:'Cloud–Edge–Device Paper Reproduction',heroDescription:'Bring research methods to real, heterogeneous compute.',start:'Start an experiment',
+      heroTitle:'Cloud–Edge–Device Research Testbed',heroDescription:'Bring research methods to real, heterogeneous compute.',start:'Start an experiment',
       tierDevice:'Sensing',tierEdge:'Near-field inference',tierCloud:'Central compute',
       tierDefault:'Connect methods and evidence, from device-side input to cloud compute.',
       concept:'Architecture demonstration · Not live cluster status',
@@ -46,11 +46,11 @@
       phases:[
         ['Understand','DOCUMENT AGENT','Understand the method. And its limits.','Extract objectives, method steps and acceptance criteria from source materials. Record assumptions and missing information to establish the scope of reproduction.','Artifacts: objectives · source evidence · assumptions'],
         ['Plan','CONFIGURATION AGENT','Map the research question to resources.','Combine source evidence with live cluster capacity to plan architecture, images, CPU, memory and GPU requests. Feed preflight diagnostics into replanning.','Artifacts: resource configuration · runtime · diagnostics'],
-        ['Schedule','KUBERNETES SCHEDULING','Secure compute before generating code.','Select eligible Ready nodes. When needed, relax node type to consider alternatives while preserving architecture and GPU constraints. All resources must be scheduled before code generation.','Artifacts: placements · resource instances · fallback records'],
+        ['Schedule','RESOURCE AGENT','Secure compute before generating code.','Reserve a compatible peak-capacity pool for up to three experiments. Consider alternative nodes while preserving hard constraints. All resources must be ready before code generation.','Artifacts: resource pool · placements · fallback records'],
         ['Generate','CODE AGENT','Turn the method into a program.','After scheduling succeeds, generate a Python program and per-Unit execution plan from the source and configuration. Save code as a previewable, downloadable artifact.','Artifacts: generated code · run parameters · observations'],
         ['Execute','EXECUTION ENGINE','Run in containers. Inspect real outputs.','Wait for runtime readiness, upload the program and execute it. Capture stdout, stderr, exit codes and elapsed time, including failure and timeout evidence.','Artifacts: execution outputs · exit status · elapsed time'],
         ['Analyze','ANALYSIS AGENT','Put conclusions to the evidence test.','Compare objectives with actual execution outputs, identify risks and suggest next steps. A successful run does not establish complete scientific reproduction.','Artifacts: checks · limitations · recommendations'],
-        ['Report','REPORT AGENT','Keep a record you can build on.','Assemble source, configuration, placement, code and execution evidence into a downloadable report. Reclaim compute independently while retaining experiment artifacts.','Artifacts: Markdown report · experiment archive']
+        ['Report','REPORT AGENTS','Keep a record you can build on.','The orchestrator consolidates up to three experiments into a process report and an experiment comparison report. Failed work triggers immediate compute reclamation; evidence is retained.','Artifacts: process report · experiment comparison']
       ]
     }
   };
@@ -82,7 +82,7 @@
   }
   function renderCopy() {
     document.documentElement.lang = lang;
-    document.title = 'Smart-Kube · ' + copy[lang].heroTitle;
+    document.title = copy[lang].heroTitle;
     document.querySelectorAll('[data-copy]').forEach(el => { el.textContent = copy[lang][el.dataset.copy]; });
     $('phaseRail').innerHTML = copy[lang].phases.map((row,i) => '<button type="button" role="tab" class="phase-tab" id="phase-'+i+'" data-phase="'+i+'" aria-controls="stepPanel"><small>0'+(i+1)+'</small><span>'+row[0]+'</span></button>').join('');
     updatePhase();

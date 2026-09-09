@@ -244,6 +244,32 @@ curl -fsSI http://cloudedgeiot.top/
 
 ### Workspace Studio and File Previews
 
+- `backend/paper_suite.py` owns bounded multi-experiment orchestration. The
+  document Agent must identify 1-3 experiments with verified source quotations;
+  do not silently collapse a missing/invalid experiment array into one run.
+- Plan all experiments first. `peak_pool` takes CPU/memory/GPU/count maxima per
+  compatible tier/architecture/image slot. Different architectures must not
+  share a slot. Never drop a case to satisfy the eight-Unit pool limit.
+- Allocate and wait for the whole pool to become Ready before generating code.
+  Experiments run sequentially with separate filenames and working directories;
+  Units inside one experiment may run concurrently. Persist per-case outputs.
+- Any execution failure is fail-fast: reclaim compute immediately, keep files
+  and evidence, and explicitly mark remaining cases unexecuted. Cleanup failure
+  must remain visible/retryable, never reported as successful reclamation.
+- Reports are separate: `report_md` is the process report;
+  `comparison_report_md` is the research comparison. Download via `/report`
+  with `kind=process|comparison`. Both require the same workspace authorization.
+  Missing or non-comparable paper metrics must not become fabricated speedups.
+  Model synthesis failure still leaves bounded evidence-based reports.
+- `backend/archive_paths.py` only remaps the documented old upload root
+  `/home/ubuntu/smart-kube/uploads` to the active upload root. Validate ownership,
+  traversal and realpath containment, including symlinks. Never delete outside
+  the current upload directory or widen the accepted legacy roots casually.
+- Public branding describes the research testbed, not its orchestration backend.
+  `frontend/assets/boards/` contains owner-supplied model photographs; provenance
+  is in `SOURCES.md`. Do not imply that photographs indicate live availability.
+- Additional checks: `tests/test_paper_suite.py` and `node tests/testbed_ui.cjs`.
+
 - `frontend/js/workspace_flow.js` uses the vendored Cytoscape engine for the
   operational canvas. It renders actual events and recorded scheduling
   fallbacks. Replaying the event cursor is read-only; it must never rerun jobs.

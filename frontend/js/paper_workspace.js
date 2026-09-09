@@ -315,22 +315,34 @@
     }
 
     function renderInspector() {
-        const workspace = state.workspace;
+        let workspace = state.workspace;
         if (!workspace) return;
+        const cases = workspace.config_json?.suite || [];
+        const picker = $('#inspectorCase');
+        picker.hidden = !cases.length || ['report','comparison'].includes(state.tab);
+        $('#inspectorScope').hidden = !picker.hidden;
+        picker.innerHTML = '<option value="">全部实验</option>' + cases.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.title)}</option>`).join('');
+        picker.value = state.inspectorCase || '';
+        const activeCase = cases.find(item=>item.id===state.inspectorCase);
+        if (activeCase && !['report','comparison'].includes(state.tab)) {
+            const result = workspace.schedule_json?.suite?.find(item=>item.id===activeCase.id) || {};
+            workspace = {...workspace, config_json:activeCase.configuration || {}, schedule_json:result, analysis_json:result.analysis || {}};
+        }
         const body = $('#inspectorBody');
         $('#inspectorRaw').disabled = !['config','schedule','analysis'].includes(state.tab);
-        $('#downloadReport').hidden = state.tab !== 'report' || !workspace.report_md;
+        $('#downloadReport').hidden = !['report','comparison'].includes(state.tab);
         if (state.inspectorRaw && ['config','schedule','analysis'].includes(state.tab)) {
             body.innerHTML = `<pre class="json-view">${escapeHtml(jsonText(workspace[state.tab + '_json']))}</pre>`;
             return;
         }
-        $('#downloadReport').hidden = state.tab !== 'report' || !workspace.report_md;
-        $('#downloadReport').href = `/api/paper/workspaces/${workspace.id}/report`;
-        if (state.tab === 'report') {
-            if (!workspace.report_md) { body.innerHTML = '<div class="inspector-empty">报告将在流程结束后生成</div>'; return; }
+        const report = state.tab === 'comparison' ? workspace.comparison_report_md : workspace.report_md;
+        $('#downloadReport').hidden = !['report','comparison'].includes(state.tab) || !report;
+        $('#downloadReport').href = `/api/paper/workspaces/${workspace.id}/report?kind=${state.tab === 'comparison' ? 'comparison' : 'process'}`;
+        if (['report','comparison'].includes(state.tab)) {
+            if (!report) { body.innerHTML = '<div class="inspector-empty">报告尚未生成；旧工作可重新分析生成实验对比报告。</div>'; return; }
             const html = window.marked && window.DOMPurify
-                ? DOMPurify.sanitize(marked.parse(workspace.report_md, { gfm: true, breaks: true }))
-                : `<pre class="json-view">${escapeHtml(workspace.report_md)}</pre>`;
+                ? DOMPurify.sanitize(marked.parse(report, { gfm: true, breaks: true }))
+                : `<pre class="json-view">${escapeHtml(report)}</pre>`;
             body.innerHTML = `<article class="report-view">${html}</article>`;
             return;
         }
@@ -402,6 +414,17 @@
         $('#deleteWorkspace').disabled = state.deleting || ACTIVE.has(workspace.status);
         $('#deleteWorkspace').title = ACTIVE.has(workspace.status) ? '任务执行中，暂不能删除' : '彻底删除工作区及文件';
         renderWorkflow(workspace);
+        const storedCases = workspace.config_json?.suite || workspace.analysis_json?.suite || [];
+        const cases = workspace.experiment_suite?.length ? workspace.experiment_suite.map(item=>({...storedCases.find(old=>old.id===item.id),...item})) : storedCases;
+        const caseStates = {pending:'待规划',planning:'规划中',planned:'已规划',running:'执行中',completed:'完成',failed:'失败',skipped:'未执行',scheduled:'已调度'};
+        $('#experimentQueue').innerHTML = cases.map((item,index)=>`<button class="experiment-ticket ${escapeHtml(item.status || 'pending')}" data-case-id="${escapeHtml(item.id)}" type="button"><span class="ticket-number">0${index+1}</span><span><small>EXPERIMENT 0${index+1}</small><b>${escapeHtml(item.title)}</b><em>${caseStates[item.status] || '待执行'}</em></span><i data-lucide="${item.status==='completed'?'circle-check':item.status==='failed'?'circle-alert':'arrow-up-right'}"></i></button>`).join('');
+        $('#experimentQueue').hidden = !cases.length;
+        $('#experimentQueue').querySelectorAll('[data-case-id]').forEach(button=>{button.onclick=()=>{
+            const item=cases.find(item=>item.id===button.dataset.caseId);
+            state.flow?.selectCase?.(item.id);
+            $('#inspectorBody').innerHTML=`<article class="structured-inspector"><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.goal || '')}</p><h3>论文原文与结果</h3><p>${escapeHtml(item.source_quote || '')}</p><ul>${(item.paper_findings||[]).map(text=>`<li>${escapeHtml(text)}</li>`).join('')}</ul><h3>验收目标</h3><ul>${(item.acceptance_criteria||[]).map(text=>`<li>${escapeHtml(text)}</li>`).join('')}</ul></article>`;
+        };});
+        window.lucide?.createIcons();
         renderArtifacts(workspace);
         renderCharts(workspace);
         renderEvents(workspace);
@@ -518,6 +541,7 @@
         if (button.dataset.panel === 'telemetry') { state.durationChart?.resize(); state.resourceChart?.resize(); }
     };
     $('#inspectorRaw').onclick = () => { state.inspectorRaw = !state.inspectorRaw; $('#inspectorRaw').setAttribute('aria-pressed',String(state.inspectorRaw)); renderInspector(); };
+    $('#inspectorCase').onchange = event => { state.inspectorCase = event.target.value; renderInspector(); };
     $('#selectWorkspaces').onchange = event => {
         state.selected.clear();
         if (event.target.checked) state.summaries.filter(item => item.access_role !== 'collaborator' && !ACTIVE.has(item.status) && item.name.toLowerCase().includes(state.search)).forEach(item => state.selected.add(item.id));
@@ -534,7 +558,7 @@
         state.tab = button.dataset.tab;
         document.querySelectorAll('.inspector-tabs button').forEach(item => item.classList.toggle('active', item === button));
         renderInspector();
-        if (state.detailsStale && ['code', 'run', 'report'].includes(state.tab)) {
+        if (state.detailsStale) {
             loadWorkspace(state.workspace?.id).catch(() => {});
         }
     };

@@ -69,7 +69,7 @@
 
           <section class="workflow-band" id="flowStudio">
             <div class="studio-toolbar">
-              <div class="studio-heading"><i data-lucide="workflow"></i><div><h2>Agent 工作流</h2><span id="flowRunId"></span></div></div>
+              <div class="studio-heading"><i data-lucide="network"></i><div><h2>Multi-Agent 协作</h2><span id="flowRunId"></span></div></div>
               <div class="studio-tools">
                 <span class="live-indicator offline" id="liveIndicator"><i></i>正在连接</span>
                 <button class="icon-btn" id="flowFit" title="适配画布" aria-label="适配画布"><i data-lucide="scan"></i></button>
@@ -80,6 +80,7 @@
               </div>
             </div>
             <div class="flow-summary" id="flowSummary"></div>
+            <div class="experiment-queue" id="experimentQueue" aria-label="实验编排"></div>
             <div class="flow-stage">
               <div class="flow-canvas-wrap">
                 <div class="flow-legend"><span><i class="success"></i>完成</span><span><i class="active"></i>执行中</span><span><i class="retry"></i>重试 / 回退</span><span><i class="failed"></i>失败</span></div>
@@ -128,9 +129,10 @@
                 <button data-tab="run" type="button">运行</button>
                 <button data-tab="schedule" type="button">调度</button>
                 <button data-tab="analysis" type="button">分析</button>
-                <button data-tab="report" type="button">报告</button>
+                <button data-tab="comparison" type="button">实验对比</button>
+                <button data-tab="report" type="button">过程报告</button>
               </div>
-              <div class="inspector-tools"><span>阶段产物</span><button class="icon-btn" id="inspectorRaw" title="查看原始数据" aria-label="查看原始数据" aria-pressed="false"><i data-lucide="braces"></i></button></div>
+              <div class="inspector-tools"><select id="inspectorCase" aria-label="选择实验产物" hidden></select><span id="inspectorScope">阶段产物</span><button class="icon-btn" id="inspectorRaw" title="查看原始数据" aria-label="查看原始数据" aria-pressed="false"><i data-lucide="braces"></i></button></div>
               <div class="inspector-body" id="inspectorBody"></div>
               <a class="report-download" id="downloadReport" href="#" hidden>下载 Markdown 报告</a>
             </aside>

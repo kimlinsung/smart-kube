@@ -7,6 +7,7 @@ import shutil
 
 from . import audit, db, k8s_client
 from .config import UPLOAD_DIR
+from .archive_paths import resolve_archive
 
 
 
@@ -63,10 +64,11 @@ def delete_project(user, project_id, kind="experiment", source_ip="unknown", upl
             ).fetchall()]
         root = os.path.realpath(upload_root or UPLOAD_DIR)
         directories = [os.path.join(root, str(exp["user_id"]), "paper", w["id"]) for w in workspaces]
-        for path in paths + directories:
-            resolved = os.path.realpath(path)
-            if resolved == root or os.path.commonpath((root, resolved)) != root:
-                raise ProjectError("归档路径超出上传目录，已停止删除", 409)
+        try:
+            paths = [resolve_archive(path, root, exp["user_id"]) for path in paths]
+            directories = [resolve_archive(path, root, exp["user_id"]) for path in directories]
+        except ValueError as exc:
+            raise ProjectError(f"{exc}，已停止删除", 409) from exc
         try:
             deleted = k8s_client.delete_pods_by_experiment(exp_id)
             # Keep metadata on cleanup failure so the same operation can be retried.

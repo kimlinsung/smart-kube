@@ -208,6 +208,9 @@ def init_db():
             )
             """
         )
+        cur.execute("PRAGMA table_info(paper_workspaces)")
+        if "comparison_report_md" not in {r["name"] for r in cur.fetchall()}:
+            cur.execute("ALTER TABLE paper_workspaces ADD COLUMN comparison_report_md TEXT")
         cur.execute("PRAGMA table_info(paper_workspace_files)")
         paper_file_cols = {r["name"] for r in cur.fetchall()}
         if "artifact_type" not in paper_file_cols:
@@ -462,6 +465,7 @@ def get_script_file(file_id, user_id=None):
 
 
 def get_script_file_internal(file_id, user_id=None):
+    from .archive_paths import migrated_file
     clauses = ["id=?"]
     params = [file_id]
     if user_id is not None:
@@ -470,7 +474,7 @@ def get_script_file_internal(file_id, user_id=None):
     with cursor() as cur:
         cur.execute(f"SELECT * FROM script_files WHERE {' AND '.join(clauses)}", params)
         row = cur.fetchone()
-    return dict(row) if row else None
+    return migrated_file(row)
 
 
 def get_latest_script_file(user_id, experiment_id=None):
@@ -660,7 +664,7 @@ def create_paper_workspace(user_id, experiment_id, name, goal, mode, resource_sp
 def update_paper_workspace(workspace_id, **changes):
     allowed = {
         "name", "goal", "mode", "status", "stage", "resource_spec", "config_json",
-        "schedule_json", "analysis_json", "report_md", "retries", "resources_reclaimed",
+        "schedule_json", "analysis_json", "report_md", "comparison_report_md", "retries", "resources_reclaimed",
         "finished_at",
     }
     updates, params = [], []
@@ -836,7 +840,7 @@ def _compact_workspace_schedule(schedule):
         })
     return {
         key: schedule[key]
-        for key in ("strategy", "requested", "created", "resources_retained", "execution_summary")
+        for key in ("strategy", "requested", "created", "resources_retained", "execution_summary", "cleanup")
         if key in schedule
     } | {"placements": placements, "executions": executions}
 
@@ -845,7 +849,7 @@ def _compact_workspace_analysis(analysis):
     analysis = analysis if isinstance(analysis, dict) else {}
     return {
         key: analysis[key]
-        for key in ("verdict", "summary", "checks", "risks", "recommendations", "analysed_at", "stage_durations")
+        for key in ("verdict", "summary", "checks", "risks", "recommendations", "analysed_at", "stage_durations", "suite")
         if key in analysis
     }
 
@@ -860,7 +864,10 @@ def get_paper_workspace_status(workspace_id, user_id=None, event_limit=50):
         cur.execute(
             "SELECT w.id,w.user_id,w.experiment_id,w.name,w.goal,w.mode,w.status,w.stage,"
             "w.resource_spec,w.schedule_json,w.analysis_json,w.retries,w.resources_reclaimed,"
-            "w.created_at,w.updated_at,w.finished_at,e.name AS experiment_name "
+            "w.created_at,w.updated_at,w.finished_at,e.name AS experiment_name, "
+            "(SELECT json_group_array(json_object('id',json_extract(value,'$.id'),"
+            "'title',json_extract(value,'$.title'),'status',json_extract(value,'$.status'))) "
+            "FROM json_each(w.config_json,'$.suite')) AS experiment_suite "
             "FROM paper_workspaces w LEFT JOIN experiments e ON e.id=w.experiment_id "
             f"WHERE {' AND '.join(clauses)}",
             params,
@@ -870,6 +877,7 @@ def get_paper_workspace_status(workspace_id, user_id=None, event_limit=50):
             return None
         item = dict(row)
         item["resource_spec"] = _json_load(item.get("resource_spec"), {})
+        item["experiment_suite"] = _json_load(item.get("experiment_suite"), [])
         item["schedule_json"] = _compact_workspace_schedule(_json_load(item.get("schedule_json"), {}))
         item["analysis_json"] = _compact_workspace_analysis(_json_load(item.get("analysis_json"), {}))
         item["resources_reclaimed"] = bool(item.get("resources_reclaimed"))
@@ -885,6 +893,7 @@ def get_paper_workspace_status(workspace_id, user_id=None, event_limit=50):
             "json_extract(data,'$.attempt') AS attempt, "
             "json_extract(data,'$.from') AS source_stage, "
             "json_extract(data,'$.to') AS target_stage, "
+            "json_extract(data,'$.case_id') AS case_id, "
             "json_extract(data,'$.scheduling.relaxed') AS relaxed "
             "FROM paper_workspace_events "
             "WHERE workspace_id=? ORDER BY id DESC LIMIT ?",
@@ -894,7 +903,7 @@ def get_paper_workspace_status(workspace_id, user_id=None, event_limit=50):
         for event_row in cur.fetchall():
             event = dict(event_row)
             event["transition"] = {key: event.pop(column) for key, column in (
-                ("attempt", "attempt"), ("from", "source_stage"), ("to", "target_stage"),
+                ("attempt", "attempt"), ("from", "source_stage"), ("to", "target_stage"), ("case_id", "case_id"),
             )}
             event["transition"]["relaxed"] = _json_load(event.pop("relaxed"), [])
             events.append(event)
@@ -928,6 +937,7 @@ def get_paper_workspace_presentation_for_experiment(experiment_id, event_limit=5
 
 
 def get_paper_workspace_file(file_id, user_id=None):
+    from .archive_paths import migrated_file
     clauses, params = ["id=?"], [file_id]
     if user_id is not None:
         clauses.append("user_id=?")
@@ -935,10 +945,11 @@ def get_paper_workspace_file(file_id, user_id=None):
     with cursor() as cur:
         cur.execute(f"SELECT * FROM paper_workspace_files WHERE {' AND '.join(clauses)}", params)
         row = cur.fetchone()
-    return dict(row) if row else None
+    return migrated_file(row)
 
 
 def list_paper_workspace_files_internal(workspace_id, user_id=None):
+    from .archive_paths import migrated_file
     clauses, params = ["workspace_id=?"], [workspace_id]
     if user_id is not None:
         clauses.append("user_id=?")
@@ -948,7 +959,7 @@ def list_paper_workspace_files_internal(workspace_id, user_id=None):
             f"SELECT * FROM paper_workspace_files WHERE {' AND '.join(clauses)} ORDER BY id",
             params,
         )
-        return [dict(row) for row in cur.fetchall()]
+        return [migrated_file(row) for row in cur.fetchall()]
 
 
 def interrupt_incomplete_paper_workspaces():

@@ -141,3 +141,71 @@ body[data-page="paper_workspace"] .topbar { position:relative; }
 @media(max-width:640px) { .workspace-title h1 { font-size:20px; }.studio-toolbar { align-items:flex-start; flex-wrap:wrap; }.studio-tools { justify-content:flex-start; width:100%; }.studio-tools .live-indicator { margin-right:auto; }.flow-summary { grid-template-columns:1fr 1fr; }.flow-summary>div { padding:12px 18px; border-bottom:1px solid #edf0f4; }.flow-summary strong { font-size:16px; }.flow-stage { grid-template-columns:1fr; }.stage-inspector { border-left:0; border-top:1px solid #e3e7ed; }.stage-icon { float:left; margin-right:12px; }.stage-facts { grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; clear:both; margin-bottom:12px; padding-top:8px; }.stage-trace { max-height:110px; }.flow-legend { gap:9px; left:14px; }.flow-legend span { font-size:9px; }#workflowGraph { height:370px; }.flow-replay { gap:8px; padding:10px 14px; }.flow-event-caption { padding:0 16px 12px; }.flow-focused .stage-inspector { display:none; }.flow-focused .flow-summary { display:none; }.workspace-grid { display:flex; flex-direction:column; }.workspace-column,.artifact-inspector { width:100%; }.workspace-section { padding:20px 16px; }.chart-grid { grid-template-columns:1fr; }.file-preview-dialog { width:100%; height:100dvh; max-height:100dvh; border-radius:0; }.preview-body { padding:12px; }.preview-document { padding:22px 18px; }.preview-slide { padding:18px; aspect-ratio:auto; min-height:220px; }.preview-slide p:first-of-type { font-size:18px; }.preview-heading b { font-size:12px; }.preview-heading>svg { display:none; } }
 @media(prefers-reduced-motion:reduce) { .paper-content *, .file-preview-backdrop * { transition:none!important; animation:none!important; scroll-behavior:auto!important; } }
 @media(max-width:640px) { #workflowGraph { height:570px; }.flow-focused #workflowGraph { height:auto; }.workspace-panel-tabs { padding:0 12px; gap:10px; } }
+
+/* Research studio: a light instrument surface around the multi-agent canvas. */
+body[data-page="paper_workspace"] { --bg:#f1f4f3; --text:#202b2a; --border:#e2e8e5; --primary:#1e6c57; }
+body[data-page="paper_workspace"] .sidebar { background:#fff; border-right:1px solid #e5eae7; }
+body[data-page="paper_workspace"] .topbar { background:#ffffffed; border-bottom:1px solid #e3e9e6; min-height:72px; }
+.paper-content { background:#f1f4f3; grid-template-columns:190px minmax(0,1fr); }
+.workspace-rail { background:#f7f9f8; border-right:1px solid #e0e7e3; padding:22px 12px; }
+.new-workspace-btn { background:#233b32!important; border-color:#233b32!important; box-shadow:0 4px 10px #143a2220; }
+.history-row { border-radius:6px; margin-top:7px; }
+.history-item.active { background:#e5efe8; }
+.workspace-view { background:#fff; }
+.workspace-head { padding:25px 28px 16px; background:#fff; align-items:center; }
+.workspace-title h1 { font-size:24px; line-height:1.35; color:#233b32; }
+.workspace-title p { color:#87918c; font-size:12px; }
+.workspace-kicker { margin-bottom:8px; }
+.workspace-actions { gap:6px; }
+.workspace-actions button,.workspace-actions .button-link { height:34px; padding:6px 9px; font-size:10px; }
+.run-strip { border-bottom:0; font-size:10px; padding:10px 28px 16px; }
+.run-progress { height:4px; }
+.studio-toolbar { border-top:1px solid #e4eae7; border-bottom:0; padding:20px 24px 15px; background:#f5f7f6; }
+.studio-heading h2 { font-size:16px; font-weight:650; color:#263e32; }
+.studio-heading>svg { width:34px; height:34px; padding:7px; background:#e1ebe6; border-radius:8px; }
+.studio-heading span { font-size:9px; }
+.flow-summary { padding:0 24px 18px; gap:12px; background:#f5f7f6; border:0; }
+.flow-summary>div { border:0; border-radius:8px; padding:16px 18px; background:#e3eee7; position:relative; overflow:hidden; }
+.flow-summary>div:nth-child(2) { background:#e6edf5; }
+.flow-summary>div:nth-child(3) { background:#f4edcf; }
+.flow-summary>div:nth-child(4) { background:#e4edef; }
+.flow-summary small { font-size:10px; color:#687970; }
+.flow-summary strong { font-size:22px; font-weight:550; color:#223f32; }
+.experiment-queue { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; padding:0 24px 20px; background:#f5f7f6; }
+.experiment-queue:empty,.experiment-queue[hidden] { display:none; }
+.experiment-ticket { display:flex; align-items:center; gap:12px; min-width:0; text-align:left; padding:13px; border:1px solid #e0e7e2; border-radius:8px; background:#fff; transition:transform .18s,box-shadow .18s; }
+.experiment-ticket:hover { transform:translateY(-3px); box-shadow:0 7px 18px #29473312; }
+.ticket-number { display:grid; place-items:center; width:34px; height:42px; border:1px solid #dce6e1; border-radius:5px; background:#f3f7f4; font:15px ui-monospace,monospace; color:#637e6e; flex:none; }
+.experiment-ticket>span:nth-child(2) { min-width:0; flex:1; }
+.experiment-ticket small { display:block; font-size:8px; color:#89958e; }
+.experiment-ticket b { display:block; font-size:11px; font-weight:550; margin:4px 0; overflow-wrap:anywhere; }
+.experiment-ticket em { font-size:9px; color:#7e8b83; font-style:normal; }
+.experiment-ticket>svg { width:17px; height:17px; flex:none; color:#82948b; }
+.experiment-ticket.running { border-color:#5a9e88; background:#f5fbf7; }.experiment-ticket.failed { border-color:#e4adb1; }.experiment-ticket.failed em { color:#c65966; }
+.flow-stage { grid-template-columns:minmax(0,1fr) 250px; min-height:545px; border-top:1px solid #e1e8e3; }
+.flow-canvas-wrap { background-color:#f0f4f2; background-image:radial-gradient(#bccbc3 .65px,transparent .65px); background-size:20px 20px; }
+#workflowGraph { height:525px; }
+.flow-stage-nav { padding:0 14px 12px; gap:2px; }
+.flow-stage-nav button { font-size:9px; padding:4px 6px; }
+.stage-inspector { padding:24px 18px; border-color:#e1e8e3; background:#fbfcfb; }
+.stage-icon { width:48px; height:48px; background:#e3eee7; border:1px solid #d3e3d8; color:#398263; box-shadow:0 5px 0 #dbe6df; margin-bottom:24px; }
+.stage-icon svg { width:25px; height:25px; }
+.stage-inspector h3 { color:#263e32; font-size:19px; }
+.stage-facts { gap:18px 8px; margin:22px 0; }
+.stage-facts dd { font-size:15px; font-weight:500; }
+.stage-trace { max-height:205px; }
+.flow-replay { padding:12px 24px; border-top-color:#e0e7e2; }.flow-replay input { accent-color:#558d72; }
+.flow-event-caption { color:#8b9890; font-size:10px; }
+.workspace-grid { grid-template-columns:minmax(0,1fr) minmax(310px,.8fr); background:#fff; }
+.workspace-panel-tabs,.inspector-tabs { height:48px; background:#f8faf9; border-top:1px solid #e3e9e5; }
+.workspace-section { padding:24px; }
+.metric-row { border:0; gap:9px; }.paper-metric { border:1px solid #e7ede8!important; background:#fcfdfc; border-radius:6px; padding:12px; }.paper-metric b { color:#354e40; }
+.chart-grid { grid-template-columns:1.4fr 1fr; }.paper-chart { height:180px; }
+.artifact-inspector { min-height:440px; border-left:1px solid #e3e9e5; }
+.inspector-tabs button { font-size:10px; padding:8px; }
+#inspectorCase { max-width:85%; font:11px inherit; border:1px solid #e1e8e3; border-radius:5px; padding:6px 8px; background:#f7faf8; color:#617969; }
+.resource-plan article { background:#f8fbf9; border-color:#e2e9e4; }
+.flow-focused .flow-stage { min-height:0; }.flow-focused #workflowGraph { height:auto; }.flow-focused .experiment-queue { display:none; }
+@media(min-width:901px) and (max-width:1250px) { .paper-content { grid-template-columns:160px minmax(0,1fr); }.flow-stage { grid-template-columns:1fr; }.stage-inspector { display:none; }.workspace-grid { grid-template-columns:1fr; }.artifact-inspector { border-left:0; }.workspace-head { padding:22px; }.workspace-title h1 { font-size:21px; } }
+@media(max-width:900px) { .paper-content { grid-template-columns:1fr; }.workspace-rail { border-right:0; padding:14px 18px; }.flow-stage { grid-template-columns:minmax(0,1fr) 220px; }.workspace-grid { grid-template-columns:1fr; }.experiment-queue { gap:7px; padding-inline:18px; }.experiment-ticket { gap:7px; padding:10px; }.ticket-number { display:none; } }
+@media(max-width:640px) { .workspace-head { padding:20px 18px 10px; }.workspace-title h1 { font-size:20px; }.workspace-actions { flex-wrap:wrap; }.workspace-actions button,.workspace-actions .button-link { width:auto; min-width:0; flex:0 1 auto; white-space:nowrap; height:32px; }.flow-summary { padding:0 16px 16px; gap:8px; }.flow-summary>div { padding:12px 14px; }.flow-summary strong { font-size:19px; }.studio-toolbar { padding:18px 16px; }.flow-stage { grid-template-columns:1fr; }.stage-inspector { display:block; padding:18px; }.stage-facts { margin:16px 0; }.stage-facts dd { font-size:12px; }.stage-icon { width:38px; height:38px; margin-bottom:16px; }.stage-inspector h3 { font-size:17px; }.experiment-queue { grid-template-columns:1fr; }.experiment-ticket { padding:10px 12px; }.experiment-ticket small { display:none; }.ticket-number { display:grid; width:27px; height:30px; }.experiment-ticket b { display:inline; margin-right:10px; }.experiment-ticket em { white-space:nowrap; }#workflowGraph { height:765px; }.flow-focused .stage-inspector { display:none; }.chart-grid { grid-template-columns:1fr; }.workspace-grid { display:block; }.inspector-tabs { flex-wrap:wrap; height:auto; min-height:48px; }.flow-stage-nav { gap:2px; } }

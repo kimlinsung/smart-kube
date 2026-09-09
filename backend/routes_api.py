@@ -787,12 +787,16 @@ def paper_workspace_report(workspace_id):
     u = request.current_user
     workspace = db.get_paper_workspace(workspace_id, include_details=False)
     exp = db.get_experiment(workspace["experiment_id"]) if workspace else None
-    if not workspace or not _experiment_access(exp, u) or not workspace.get("report_md"):
+    kind = request.args.get("kind", "process")
+    if kind not in {"process", "comparison"}:
+        return jsonify({"error": "未知报告类型"}), 400
+    field = "comparison_report_md" if kind == "comparison" else "report_md"
+    if not workspace or not _experiment_access(exp, u) or not workspace.get(field):
         return jsonify({"error": "报告尚未生成"}), 404
     return Response(
-        workspace["report_md"],
+        workspace[field],
         mimetype="text/markdown; charset=utf-8",
-        headers={"Content-Disposition": f"attachment; filename=workspace-{workspace_id[:8]}-report.md"},
+        headers={"Content-Disposition": f"attachment; filename=workspace-{workspace_id[:8]}-{kind}-report.md"},
     )
 
 

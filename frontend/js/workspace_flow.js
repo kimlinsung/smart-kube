@@ -1,6 +1,7 @@
 /* Observable execution graph. The event cursor never changes server state. */
 window.WorkspaceFlow = (() => {
     const stages = [
+        ['orchestrator','实验编排','Orchestrator','BrainCircuit','config'],
         ['intake','文档理解','Document Agent','FileText','config'],
         ['config','配置规划','Configuration Agent','Settings2','config'],
         ['gate','资源预检','Preflight Gate','ShieldCheck','schedule'],
@@ -9,7 +10,8 @@ window.WorkspaceFlow = (() => {
         ['execute','真实执行','Execution Engine','Terminal','run'],
         ['analysis','证据分析','Analysis Agent','ChartNoAxesCombined','analysis'],
         ['report','报告归档','Report Agent','FileCheck2','report'],
-        ['retain','资源保留','Resource Lifecycle','Archive','schedule'],
+        ['comparison','实验对比','Comparison Agent','GitCompareArrows','comparison'],
+        ['retain','资源生命周期','Resource Guardian','ShieldCheck','schedule'],
     ];
     const names = Object.fromEntries(stages.map(row=>[row[0],row[1]]));
     const states = {pending:'等待',active:'执行中',completed:'完成',failed:'失败',warning:'需关注',skipped:'未启用',retained:'保留中',reclaimed:'已回收'};
@@ -18,14 +20,12 @@ window.WorkspaceFlow = (() => {
     const esc = value => escapeHtml(String(value ?? ''));
     function create(container,{onArtifact}) {
         let workspace=null, selected='intake', following=true, cursor=null, timer=null, lastTick=0, lastWorkspace=null;
-        let frame=null, animation=0, branchCount=0;
+        let frame=null, animation=0, branchCount=0, caseId=null;
         const $=id=>document.getElementById(id);
         const small=()=>container.clientWidth<480;
         function positions() {
-            return stages.map((row,index)=>{
-                const columns=small()?2:3, line=Math.floor(index/columns), offset=index%columns;
-                return {x:110+(line%2 ? columns-1-offset : offset)*200,y:76+line*125};
-            });
+            const map={orchestrator:[355,205],intake:[110,65],config:[355,65],gate:[600,65],schedule:[600,205],code:[600,345],execute:[355,345],analysis:[110,345],report:[110,485],comparison:[355,485],retain:[600,485]};
+            return stages.map((row,index)=>small()?{x:110+(index%2)*230,y:70+Math.floor(index/2)*130}:{x:map[row[0]][0],y:map[row[0]][1]});
         }
         const icons=Object.fromEntries(stages.map(row=>{
             const data=window.lucide?.icons[row[3]];
@@ -34,7 +34,10 @@ window.WorkspaceFlow = (() => {
         const cy=cytoscape({container, elements:stages.map((row,i)=>({data:{id:row[0],label:row[1],icon:icons[row[0]]},position:positions()[i]})),
             layout:{name:'preset'}, minZoom:.35,maxZoom:2.2, wheelSensitivity:.15, boxSelectionEnabled:false,
             style:[
-                {selector:'node',style:{width:166,height:78,shape:'round-rectangle','corner-radius':8,'background-color':'#ffffff','border-color':'#d9e1ed','border-width':1,label:'data(label)',color:'#526379','font-size':11,'font-family':'system-ui','text-wrap':'wrap','text-max-width':130,'text-valign':'center','text-halign':'center','line-height':1.65,'background-image':'data(icon)','background-width':16,'background-height':16,'background-position-x':10,'background-position-y':12,'text-margin-x':7,'overlay-opacity':0}},
+                {selector:'node',style:{width:188,height:86,shape:'round-rectangle','corner-radius':8,'background-color':'#ffffff','border-color':'#d9e1ed','border-width':1,label:'data(label)',color:'#526379','font-size':12,'font-family':'system-ui','text-wrap':'wrap','text-max-width':150,'text-valign':'center','text-halign':'center','line-height':1.65,'background-image':'data(icon)','background-width':18,'background-height':18,'background-position-x':10,'background-position-y':12,'text-margin-x':7,'overlay-opacity':0}},
+                {selector:'#orchestrator',style:{'background-color':'#e5efe9','border-color':'#8aaf9c','border-width':2,color:'#25634f',width:204,height:98}},
+                {selector:'edge.delegation',style:{'line-style':'dashed','line-color':'#a5b8bb','target-arrow-color':'#a5b8bb','curve-style':'bezier',opacity:.6}},
+                {selector:'edge.call',style:{'curve-style':'bezier','line-color':'#4f90aa','target-arrow-color':'#4f90aa',width:2,label:'data(label)','font-size':9,color:'#537e88','text-background-color':'#f4f7f7','text-background-opacity':1,'text-background-padding':3}},
                 {selector:'node[state="completed"]',style:{'border-color':'#b2dece','background-color':'#f7fcfa',color:'#276a58'}},
                 {selector:'node[state="active"]',style:{'border-color':'#548ae7','border-width':2,'background-color':'#edf4ff',color:'#28569b'}},
                 {selector:'node[state="failed"]',style:{'border-color':'#e99aa3','background-color':'#fff4f5',color:'#b44253'}},
@@ -51,9 +54,10 @@ window.WorkspaceFlow = (() => {
             ]});
         cy.nodes().ungrabify();
         function events() {const all=workspace?.events||[];return cursor===null?all:all.slice(0,cursor+1);}
-        function stageEvents(id) {return events().filter(event=>id==='gate' ? event.event_type==='preflight_failed'||event.event_type==='preflight' : event.phase===id);}
+        function stageEvents(id) {return events().filter(event=>(!caseId || !(event.data||event.transition)?.case_id || (event.data||event.transition)?.case_id===caseId) && (id==='orchestrator' ? /agent_called|agent_returned/.test(event.event_type) : id==='retain' ? event.phase==='lifecycle' : id==='gate' ? event.event_type==='preflight_failed'||event.event_type==='preflight' : event.phase===id));}
         function stageState(id) {
             if(!workspace) return 'pending';
+            if(id==='orchestrator')return workspace.status==='completed'?'completed':['failed','interrupted'].includes(workspace.status)?'failed':['queued','running'].includes(workspace.status)?'active':'pending';
             if(['code','execute','analysis'].includes(id)&&workspace.mode==='resources') return 'skipped';
             if(cursor===null && id==='retain') return workspace.resources_reclaimed?'reclaimed':workspace.schedule_json?.created>0?'retained':'pending';
             if(id==='execute' && (cursor===null ? (workspace.schedule_json?.executions||[]).some(run=>run.status!=='succeeded') : stageEvents(id).some(event=>event.event_type==='execution_failed'))) return 'warning';
@@ -67,14 +71,14 @@ window.WorkspaceFlow = (() => {
             let current=cursor===null?workspace.stage:last?.phase;
             if(last?.event_type==='preflight_failed' && (cursor!==null || workspace.stage==='config')) current='gate';
             const position=stages.findIndex(row=>row[0]===current);
-            if(current==='completed') return 'completed';
+            if(current==='completed') return stageEvents(id).length?'completed':'pending';
             if(id===current) {
                 if(cursor===null && ['failed','interrupted'].includes(workspace.status)) return 'failed';
                 if(cursor!==null&&failure(last)) return 'failed';
                 return 'active';
             }
-            if(stages.findIndex(row=>row[0]===id)<position) return 'completed';
-            if(stageEvents(id).some(event=>/agent_completed|succeeded/.test(event.event_type))) return 'completed';
+            if(stageEvents(id).some(event=>/agent_completed|agent_returned|succeeded|preflight$|reclaimed/.test(event.event_type))) return 'completed';
+            if(stageEvents(id).some(event=>/agent_called|agent_started/.test(event.event_type))) return 'active';
             return 'pending';
         }
         function elapsed(id) {
@@ -85,11 +89,19 @@ window.WorkspaceFlow = (() => {
         }
         function drawEdges() {
             cy.edges().remove();
-            const active=stages.filter(row=>!(['code','execute','analysis'].includes(row[0])&&workspace.mode==='resources'));
-            for(let i=0;i<active.length-1;i++) {
-                const state=stageState(active[i+1][0]);
-                cy.add({data:{id:'path-'+i,source:active[i][0],target:active[i+1][0]},classes:state==='active'?'current':['completed','warning','failed','retained','reclaimed'].includes(state)?'done':''});
+            const pairs=[['intake','orchestrator'],['orchestrator','config'],['config','gate'],['gate','schedule'],['schedule','orchestrator'],['orchestrator','code'],['code','execute'],['execute','analysis'],['analysis','orchestrator'],['orchestrator','report'],['orchestrator','comparison'],['orchestrator','retain']];
+            for(const [source,target] of pairs) {
+                const state=stageState(target);
+                cy.add({data:{id:'path-'+source+'-'+target,source,target},classes:state==='active'?'current':['completed','warning','failed','retained','reclaimed'].includes(state)?'done':'delegation'});
             }
+            const calls=new Map();
+            for(const event of events().filter(e=>/agent_called|agent_returned|cleanup_started/.test(e.event_type))) {
+                const data=event.data||event.transition||{};
+                if(caseId&&data.case_id&&data.case_id!==caseId)continue;
+                if(!names[data.from]||!names[data.to])continue;
+                const key=data.from+'-'+data.to;const group=calls.get(key)||{source:data.from,target:data.to,count:0};group.count++;calls.set(key,group);
+            }
+            for(const [key,value] of calls)cy.add({data:{id:'call-'+key,source:value.source,target:value.target,label:`${value.target==='orchestrator'?'返回':'调用'} ×${value.count}`},classes:'call'});
             const list=events(); branchCount=0;
             const preflight=list.filter(event=>event.event_type==='preflight_failed');
             const replans=preflight.filter(event=>list.some(later=>later.id>event.id && ['config','schedule'].includes(later.phase) && later.event_type!=='failed')).length;
@@ -138,7 +150,7 @@ window.WorkspaceFlow = (() => {
             const runs=workspace.schedule_json?.executions||[];
             const elapsedTotal=cursor===null?total-workspace.created_at:(list[list.length-1]?.created_at||workspace.created_at)-workspace.created_at;
             $('flowSummary').innerHTML=`<div><small>总耗时</small><strong>${duration(elapsedTotal)}</strong></div><div><small>${cursor===null?'当前阶段':'回放阶段'}</small><strong>${esc(names[cursor===null?workspace.stage:list[list.length-1]?.phase]|| (workspace.status==='completed'?'已归档':'待开始'))}</strong></div><div><small>回退 / 重试记录</small><strong class="${branchCount?'warning':''}">${branchCount}</strong></div><div><small>运行成功 / 总数</small><strong>${cursor===null?`${runs.filter(r=>r.status==='succeeded').length} / ${runs.length}`:'—'}</strong></div>`;
-            $('flowRunId').textContent='RUN / '+workspace.id.slice(0,12);
+            $('flowRunId').textContent=(caseId?caseId+' / ':'ORCHESTRATION / ')+workspace.id.slice(0,8);
             $('stageNav').innerHTML=stages.map(row=>`<button type="button" data-flow-stage="${row[0]}" aria-pressed="${row[0]===selected}">${row[1]}</button>`).join('');
             const all=workspace.events||[];
             $('flowTimeline').max=Math.max(0,all.length-1);$('flowTimeline').value=cursor??Math.max(0,all.length-1);$('flowTimeline').disabled=!all.length;
@@ -183,7 +195,8 @@ window.WorkspaceFlow = (() => {
         }
         frame=requestAnimationFrame(tick);
         return {
-            update(value) {workspace=value;if(lastWorkspace!==value.id){stop();cursor=null;following=true;selected='intake';lastWorkspace=value.id;draw();fit();}else draw();},
+            update(value) {workspace=value;if(lastWorkspace!==value.id){stop();cursor=null;caseId=null;following=true;selected='orchestrator';lastWorkspace=value.id;draw();fit();}else draw();},
+            selectCase(id) {caseId=caseId===id?null:id;following=false;selected='orchestrator';draw();},
             clear() {workspace=null;stop();},
             dispose() {observer.disconnect();stop();cancelAnimationFrame(frame);cy.destroy();}
         };

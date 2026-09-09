@@ -259,7 +259,7 @@ def _build_configuration(workspace, documents, intelligence, feedback=None):
             "rule_candidates": _resource_rows(resource_spec),
         },
         "agent_trace": [intelligence["agent_trace"], generated["agent_trace"]],
-        "lifecycle": {"reclaim": "manual", "retain_after_completion": True},
+        "lifecycle": {"reclaim": "automatic_on_failure", "retain_after_completion": True},
     }
 
 
@@ -517,6 +517,7 @@ def _run_on_placement(program, run, placement, pod_program_path):
     command = [program["runtime"]["entrypoint"], pod_program_path, *run["arguments"]]
     quoted = " ".join(shlex.quote(part) for part in command)
     wrapped = (
+        f"cd {shlex.quote(os.path.dirname(pod_program_path))} || exit 1; "
         f"timeout --signal=KILL {timeout}s {quoted}; "
         "code=$?; printf '\n__SMARTKUBE_EXIT_CODE__=%s\n' \"$code\" >&2; exit \"$code\""
     )
@@ -531,7 +532,7 @@ def _run_on_placement(program, run, placement, pod_program_path):
 
 
 def _execute_generated_program(
-    workspace_id, task_id, schedule, program, generated_path
+    workspace_id, task_id, schedule, program, generated_path, persist=None
 ):
     placements = {
         (item["node_type"], int(item["tier_index"])): item
@@ -546,7 +547,7 @@ def _execute_generated_program(
             f"等待 {pod_name} 就绪并上传 Agent 代码", 72 + round(6 * index / len(program["runs"])),
         )
         runtime_status = _wait_for_pod_ready(pod_name)
-        destination = "/tmp/smart-kube-experiment"
+        destination = f"/tmp/smart-kube-experiment/{workspace_id}/{os.path.splitext(program['runtime']['filename'])[0]}"
         k8s_client.exec_in_pod(pod_name, ["mkdir", "-p", destination], timeout=15)
         pod_program_path = k8s_client.copy_to_pod(
             pod_name, generated_path, dest_dir=destination,
@@ -579,7 +580,10 @@ def _execute_generated_program(
                 "succeeded": sum(item["status"] == "succeeded" for item in results),
                 "failed": sum(item["status"] != "succeeded" for item in results),
             }
-            db.update_paper_workspace(workspace_id, schedule_json=schedule)
+            if persist:
+                persist(schedule)
+            else:
+                db.update_paper_workspace(workspace_id, schedule_json=schedule)
             preview = (result["stdout"] or result["stderr"] or "无输出").strip()[:240]
             status_label = {
                 "succeeded": "成功", "failed": "失败", "timed_out": "超时",
@@ -602,7 +606,32 @@ def _execute_generated_program(
                 event_type="progress",
                 event_content=f"Unit 运行完成 {completed}/{len(futures)}",
             )
+            if result["status"] != "succeeded":
+                reclaim_failed_workspace(workspace_id)
+                for pending in futures:
+                    pending.cancel()
+                raise RuntimeError(f"{result['pod_name']} 运行{status_label}，已停止后续执行并触发资源回收")
     return schedule
+
+
+def reclaim_failed_workspace(workspace_id):
+    workspace = db.get_paper_workspace(workspace_id)
+    if not workspace or workspace.get("resources_reclaimed"):
+        return True
+    schedule = workspace.get("schedule_json") or {}
+    db.add_paper_workspace_event(workspace_id, "lifecycle", "cleanup_started", "失败保护：立即回收计算资源，保留输入和运行证据",
+                                data={"from": workspace["stage"], "to": "retain"})
+    try:
+        deleted = k8s_client.delete_pods_by_experiment(workspace["experiment_id"])
+    except Exception as exc:
+        schedule["cleanup"] = {"status": "failed", "error": str(exc)[:1000]}
+        db.update_paper_workspace(workspace_id, schedule_json=schedule)
+        db.add_paper_workspace_event(workspace_id, "lifecycle", "cleanup_failed", f"自动回收失败，请重试回收：{str(exc)[:1000]}")
+        return False
+    schedule.update(resources_retained=False, cleanup={"status": "completed", "deleted_count": len(deleted)})
+    db.update_paper_workspace(workspace_id, schedule_json=schedule, resources_reclaimed=True)
+    db.add_paper_workspace_event(workspace_id, "lifecycle", "reclaimed", f"自动回收完成：{len(deleted)} 个计算资源；文件与证据已保留")
+    return True
 
 
 def _analysis_telemetry(workspace):
@@ -683,6 +712,13 @@ def _execute_workspace(workspace_id, task_id, user, source_ip):
             f"文档理解 Agent 已生成实验元信息：{intelligence['title']}",
             data={key: value for key, value in intelligence.items() if key != "agent_trace"},
         )
+
+        if intelligence.get("experiments"):
+            from .paper_suite import execute_suite
+            execute_suite(workspace_id, task_id, user, documents, intelligence, internal_files)
+            audit.log(user["id"], user["username"], "paper_workspace_complete",
+                      json.dumps({"workspace_id": workspace_id, "experiments": len(intelligence["experiments"])}), source_ip=source_ip)
+            return
 
         _advance(workspace_id, task_id, "config", "配置 Agent 正在结合正文和集群实时资源形成配置", 20, event_type="agent_started")
         workspace = db.get_paper_workspace(workspace_id, user_id=user["id"])
@@ -833,12 +869,16 @@ def _execute_workspace(workspace_id, task_id, user, source_ip):
         current = db.get_paper_workspace(workspace_id, user_id=user["id"])
         stage = current["stage"] if current else "unknown"
         created = int(((current or {}).get("schedule_json") or {}).get("created") or 0)
-        failure_detail = (
-            f"工作流执行失败，已创建的 {created} 个资源保持不变"
-            if created else "工作流执行失败，未创建新资源"
-        )
+        reclaimed = reclaim_failed_workspace(workspace_id) if created or stage not in {"intake", "config"} else True
+        failure_detail = ("工作流执行失败，未创建计算资源" if not created else "工作流执行失败，计算资源已回收，证据已保留") if reclaimed else "工作流执行失败，自动回收未完成，请重试回收"
         db.update_paper_workspace(workspace_id, status="failed", finished_at=now)
         db.add_paper_workspace_event(workspace_id, stage, "failed", message)
+        current = db.get_paper_workspace(workspace_id)
+        if current and (not current.get("report_md") or not current.get("comparison_report_md")):
+            from .paper_suite import evidence_reports
+            process, comparison = evidence_reports(current)
+            db.update_paper_workspace(workspace_id, report_md=current.get("report_md") or process,
+                                      comparison_report_md=current.get("comparison_report_md") or comparison)
         _task_update(
             task_id,
             status="failed",
@@ -891,12 +931,16 @@ def _execute_analysis_retry(workspace_id, task_id, user, source_ip):
             f"分析 Agent 开始第 {retry_number} 次分析", 30, event_type="agent_started",
         )
         workspace = db.get_paper_workspace(workspace_id, user_id=user["id"])
-        analysis = paper_agents.run_analysis_agent(
-            workspace.get("config_json") or {},
-            workspace.get("schedule_json") or {},
-            workspace.get("events") or [],
-            retry=retry_number,
-        )
+        if (workspace.get("config_json") or {}).get("suite"):
+            from .paper_suite import reanalyse_suite
+            analysis = reanalyse_suite(workspace, retry_number)
+        else:
+            analysis = paper_agents.run_analysis_agent(
+                workspace.get("config_json") or {},
+                workspace.get("schedule_json") or {},
+                workspace.get("events") or [],
+                retry=retry_number,
+            )
         analysis.update(_analysis_telemetry(workspace))
         db.update_paper_workspace(workspace_id, analysis_json=analysis)
         _advance(
@@ -907,8 +951,10 @@ def _execute_analysis_retry(workspace_id, task_id, user, source_ip):
         workspace = db.get_paper_workspace(workspace_id, user_id=user["id"])
         _advance(workspace_id, task_id, "report", "报告 Agent 正在根据重试结果更新报告", 92, event_type="agent_started")
         report, report_trace = paper_agents.run_report_agent(workspace)
+        comparison, comparison_trace = paper_agents.run_comparison_agent(workspace)
         configuration = workspace.get("config_json") or {}
         configuration.setdefault("agent_trace", []).append(report_trace)
+        configuration["agent_trace"].append(comparison_trace)
         finished = int(time.time())
         db.update_paper_workspace(
             workspace_id,
@@ -916,6 +962,7 @@ def _execute_analysis_retry(workspace_id, task_id, user, source_ip):
             stage="completed",
             config_json=configuration,
             report_md=report,
+            comparison_report_md=comparison,
             finished_at=finished,
         )
         db.add_paper_workspace_event(
@@ -940,6 +987,7 @@ def _execute_analysis_retry(workspace_id, task_id, user, source_ip):
     except Exception as exc:
         message = str(exc)[:4000]
         finished = int(time.time())
+        reclaim_failed_workspace(workspace_id)
         db.update_paper_workspace(workspace_id, status="failed", finished_at=finished)
         db.add_paper_workspace_event(workspace_id, "analysis", "failed", message)
         _task_update(

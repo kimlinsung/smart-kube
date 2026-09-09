@@ -16,7 +16,7 @@ from backend.app import create_app
 def fake_documents(_files):
     return [{
         "name": "design.yaml", "content_type": "application/yaml", "size": 100,
-        "text": "正文：验证云边协同推理", "truncated": False, "extraction_issue": None,
+        "text": "正文：验证云边协同推理及端侧数据采集延迟", "truncated": False, "extraction_issue": None,
     }]
 
 
@@ -108,6 +108,7 @@ def agent_patches(**overrides):
         "run_code_agent": fake_code,
         "run_analysis_agent": fake_analysis,
         "run_report_agent": fake_report,
+        "run_comparison_agent": fake_report,
     }
     values.update(overrides)
     return mock.patch.multiple("backend.paper_jobs.paper_agents", **values)
@@ -280,7 +281,8 @@ class PaperAgentAdapterTest(unittest.TestCase):
         response = SimpleNamespace(
             content="""```json
 {"title":"正文标题","goal":"验证正文目标","summary":"正文摘要","domain":"边缘计算",
- "acceptance_criteria":["成功调度"],"ambiguities":[],"assumptions":["最小配置"]}
+ "acceptance_criteria":["成功调度"],"ambiguities":[],"assumptions":["最小配置"],
+ "experiments":[{"title":"协同推理","goal":"验证推理","source_quote":"验证云边协同推理及端侧数据采集延迟","acceptance_criteria":["验证延迟"],"paper_findings":[]}]}
 ```""",
             usage_metadata={"input_tokens": 10, "output_tokens": 20},
             response_metadata={"finish_reason": "stop"},
@@ -331,6 +333,7 @@ class PaperAgentAdapterTest(unittest.TestCase):
             "title": "修复后的标题", "goal": "修复后的目标", "summary": "修复后的摘要",
             "domain": "系统", "acceptance_criteria": ["合法 JSON"],
             "ambiguities": [], "assumptions": [],
+            "experiments": [{"title":"协同推理", "goal":"验证推理", "source_quote":"验证云边协同推理及端侧数据采集延迟", "acceptance_criteria":["验证延迟"], "paper_findings":[]}],
         }, ensure_ascii=False)
         llm = mock.Mock()
         llm.invoke.side_effect = [
@@ -686,13 +689,16 @@ class PaperWorkspaceJobTest(TemporaryDatabaseTest):
         code_agent = mock.Mock(side_effect=fake_code)
         with agent_patches(run_code_agent=code_agent), mock.patch(
             "backend.paper_jobs.k8s_client.create_ssh_pod", side_effect=[placement, RuntimeError("capacity exhausted")]
-        ), mock.patch("backend.paper_jobs.task_events.publish_task"):
+        ), mock.patch("backend.paper_jobs.task_events.publish_task"), mock.patch(
+            "backend.k8s_client.delete_pods_by_experiment", return_value=["unit-cloud"]
+        ):
             paper_jobs._execute_workspace(workspace["id"], task["id"], user, "203.0.113.31")
 
         failed = db.get_paper_workspace(workspace["id"], user_id=user["id"])
         self.assertEqual(failed["status"], "failed")
         self.assertEqual(failed["schedule_json"]["created"], 1)
-        self.assertTrue(failed["schedule_json"]["resources_retained"])
+        self.assertFalse(failed["schedule_json"]["resources_retained"])
+        self.assertTrue(failed["resources_reclaimed"])
         code_agent.assert_not_called()
 
     def test_llm_failure_is_visible_and_does_not_schedule(self):

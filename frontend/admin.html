@@ -32,8 +32,10 @@
 
 <script src="/js/api.js"></script>
 <script src="/js/app.js"></script>
+<script src="/js/inventory_view.js"></script>
 <script src="/js/chat.js"></script>
 <script>
+const inventory = createInventoryView('nodesBody', 'nodes');
 function renderNodeRow(n) {
     const readyBadge = n.ready === 'True'
         ? '<span class="badge dot badge-green">Ready</span>'
@@ -64,6 +66,7 @@ async function loadNodes() {
             items.forEach(n => { const tr = document.createElement('tr'); tr.innerHTML = renderNodeRow(n); body.appendChild(tr); });
         });
         if (!r.nodes.length) body.innerHTML = '<tr><td colspan="9" style="color:var(--muted)">暂无节点</td></tr>';
+        inventory.update(r.nodes);
     } catch (e) { body.innerHTML = `<tr><td colspan="9" style="color:var(--danger)">加载失败：${escapeHtml(e.message)}</td></tr>`; }
 }
 document.getElementById('nodesBody').addEventListener('click', async e => {
