@@ -9,6 +9,7 @@ from unittest import mock
 
 from langchain_core.messages import AIMessage
 from langgraph.prebuilt import ToolNode
+from langgraph.graph import StateGraph, MessagesState, START, END
 from kubernetes.client.rest import ApiException
 
 from backend import auth, db, k8s_client, tools, project_lifecycle
@@ -135,9 +136,13 @@ class ProjectLifecycleTest(unittest.TestCase):
 
     def test_toolnode_creates_workspace_with_flask_and_user_context(self):
         call = AIMessage(content="", tool_calls=[{"name": "create_project", "args": {"name": "reproduction", "kind": "workspace", "goal": "measure inference latency"}, "id": "create-1", "type": "tool_call"}])
+        graph = StateGraph(MessagesState)
+        graph.add_node("tools", ToolNode([tools.create_project]))
+        graph.add_edge(START, "tools")
+        graph.add_edge("tools", END)
         with self.app.app_context(), mock.patch("backend.paper_jobs.start_workspace_job", return_value={"id": "task"}) as start:
-            result = ToolNode([tools.create_project]).invoke({"messages": [call]})
-        data = json.loads(result["messages"][0].content)
+            result = graph.compile().invoke({"messages": [call]})
+        data = json.loads(result["messages"][-1].content)
         self.assertTrue(data["ok"])
         self.assertEqual(start.call_args.args[2]["id"], self.user["id"])
         workspace = db.get_paper_workspace(data["workspace_id"])
