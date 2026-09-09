@@ -244,7 +244,9 @@ class ExperimentSharingTest(unittest.TestCase):
     def test_delete_experiment_cleans_collaborator_and_share_rows(self):
         self.add_collaborator()
         self.client_for(self.owner).post(f"/api/experiments/{self.experiment['id']}/share")
-        with mock.patch("backend.routes_api.k8s_client.delete_pods_by_experiment", return_value=[]):
+        with mock.patch("backend.routes_api.k8s_client.delete_pods_by_experiment", return_value=[]), mock.patch(
+            "backend.routes_api.UPLOAD_DIR", self.temp_dir.name
+        ):
             response = self.client_for(self.owner).delete(f"/api/experiments/{self.experiment['id']}")
         self.assertEqual(response.status_code, 200)
         with db.cursor() as cur:

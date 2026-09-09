@@ -14,6 +14,8 @@ from .config import DATA_DIR
 
 DB_PATH = os.path.join(DATA_DIR, "smartkube.db")
 _lock = threading.Lock()
+# Serializes project deletion with admission of new asynchronous jobs.
+project_lifecycle_lock = threading.RLock()
 
 
 def _conn():
@@ -491,11 +493,13 @@ def get_latest_script_file(user_id, experiment_id=None):
     return item
 
 
-def create_execution_task(user_id, experiment_id, kind, title, detail="", metadata=None):
+def create_execution_task(user_id, experiment_id, kind, title, detail="", metadata=None, *, require_experiment=False):
     now = int(time.time())
     task_id = uuid.uuid4().hex
     metadata_text = json.dumps(metadata or {}, ensure_ascii=False)
-    with cursor() as cur:
+    with project_lifecycle_lock, cursor() as cur:
+        if require_experiment and not cur.execute("SELECT 1 FROM experiments WHERE id=?", (experiment_id,)).fetchone():
+            raise ValueError("实验已删除，不能启动新任务")
         cur.execute(
             "INSERT INTO execution_tasks("
             "id,user_id,experiment_id,kind,status,title,detail,progress,metadata,created_at,updated_at"
@@ -877,11 +881,24 @@ def get_paper_workspace_status(workspace_id, user_id=None, event_limit=50):
         item["files"] = [dict(file) for file in cur.fetchall()]
         event_limit = min(100, max(1, int(event_limit or 50)))
         cur.execute(
-            "SELECT id,phase,event_type,content,created_at FROM paper_workspace_events "
+            "SELECT id,phase,event_type,content,created_at, "
+            "json_extract(data,'$.attempt') AS attempt, "
+            "json_extract(data,'$.from') AS source_stage, "
+            "json_extract(data,'$.to') AS target_stage, "
+            "json_extract(data,'$.scheduling.relaxed') AS relaxed "
+            "FROM paper_workspace_events "
             "WHERE workspace_id=? ORDER BY id DESC LIMIT ?",
             (workspace_id, event_limit),
         )
-        item["events"] = list(reversed([dict(event) for event in cur.fetchall()]))
+        events = []
+        for event_row in cur.fetchall():
+            event = dict(event_row)
+            event["transition"] = {key: event.pop(column) for key, column in (
+                ("attempt", "attempt"), ("from", "source_stage"), ("to", "target_stage"),
+            )}
+            event["transition"]["relaxed"] = _json_load(event.pop("relaxed"), [])
+            events.append(event)
+        item["events"] = list(reversed(events))
         cur.execute(
             "SELECT id,status,title,detail,progress,metadata,created_at,started_at,updated_at,finished_at "
             "FROM execution_tasks WHERE user_id=? AND experiment_id=? AND kind IN ('paper','paper_analysis') "

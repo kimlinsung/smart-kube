@@ -688,22 +688,25 @@ def delete_pods_by_experiment(experiment_id: int) -> list[str]:
     """删除一个实验下的所有 Pod 和关联 Service，并释放 SSH 端口。返回被删 Pod 名列表。"""
     sel = f"{_LABEL_EXPERIMENT}={experiment_id}"
     deleted: list[str] = []
-    try:
-        pods = core_v1.list_namespaced_pod(NAMESPACE, label_selector=sel).items
-    except ApiException:
-        pods = []
+    pods = core_v1.list_namespaced_pod(NAMESPACE, label_selector=sel,
+                                       _request_timeout=_STARTUP_REQUEST_TIMEOUT).items
+    services = core_v1.list_namespaced_service(NAMESPACE, label_selector=sel,
+                                               _request_timeout=_STARTUP_REQUEST_TIMEOUT).items
+    service_names = {s.metadata.name for s in services} | {p.metadata.name for p in pods}
+    for name in service_names:
+        try:
+            core_v1.delete_namespaced_service(name, NAMESPACE, _request_timeout=_STARTUP_REQUEST_TIMEOUT)
+        except ApiException as exc:
+            if exc.status != 404:
+                raise
+        _release_ssh_port(name)
     for p in pods:
         name = p.metadata.name
         try:
-            core_v1.delete_namespaced_pod(name, NAMESPACE)
+            core_v1.delete_namespaced_pod(name, NAMESPACE, _request_timeout=_STARTUP_REQUEST_TIMEOUT)
         except ApiException as e:
             if e.status != 404:
-                log.warning("删除 Pod %s 失败: %s", name, e)
-                continue
-        try:
-            core_v1.delete_namespaced_service(name, NAMESPACE)
-        except ApiException:
-            pass
+                raise
         _release_ssh_port(name)
         deleted.append(name)
     return deleted

@@ -55,7 +55,7 @@
     }
   };
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
-  let lang = window.I18N?.getLang() || 'zh', phase = 0, tier = -1, playing = false, timer = null;
+  let lang = window.I18N?.getLang() || 'zh', phase = 0, playing = false, timer = null, retry = false;
   let sceneApi = null, paused = reduced.matches;
   const $ = id => document.getElementById(id);
   const icons = () => window.lucide?.createIcons();
@@ -66,22 +66,27 @@
     $('stepCounter').textContent = String(phase+1).padStart(2,'0') + ' / 07';
     $('pipelineProgress').style.width = ((phase+1)/7*100)+'%';
     $('previousStep').disabled = phase === 0;
-    $('nextStep').disabled = phase === 6;
+    $('nextStep').disabled = phase === 6 || retry;
+    $('playWorkflow').disabled = retry;
     document.querySelectorAll('.phase-tab').forEach((button,i) => {
       button.setAttribute('aria-selected', String(i === phase));
       button.tabIndex = i === phase ? 0 : -1;
     });
     $('stepPanel').setAttribute('aria-labelledby','phase-'+phase);
     sceneApi?.setPhase(phase);
+    sceneApi?.setRetry(retry);
+    $('retryDemo').setAttribute('aria-pressed',String(retry));
+    $('retryDemo').title = retry ? '重试成功，继续 / Retry succeeded, continue' : '调度失败分支 / Scheduling failure branch';
+    $('retryStatus').hidden = !retry;
+    $('retryStatus').textContent = lang === 'zh' ? '调度未成功 → 返回配置规划 → 尝试其他就绪节点；代码生成等待调度成功。' : 'Scheduling failed → revise plan → try another Ready node. Code generation waits for successful placement.';
   }
   function renderCopy() {
     document.documentElement.lang = lang;
     document.title = 'Smart-Kube · ' + copy[lang].heroTitle;
     document.querySelectorAll('[data-copy]').forEach(el => { el.textContent = copy[lang][el.dataset.copy]; });
-    $('language').textContent = lang === 'zh' ? 'EN' : '中';
     $('phaseRail').innerHTML = copy[lang].phases.map((row,i) => '<button type="button" role="tab" class="phase-tab" id="phase-'+i+'" data-phase="'+i+'" aria-controls="stepPanel"><small>0'+(i+1)+'</small><span>'+row[0]+'</span></button>').join('');
     updatePhase();
-    selectTier(tier);
+    sceneApi?.setLabels(copy[lang].phases.map(row=>row[0]));
   }
   function stopPlayback() {
     playing = false;
@@ -91,13 +96,7 @@
     $('playWorkflow').innerHTML = '<i data-lucide="play"></i>';
     icons();
   }
-  function selectPhase(index) { stopPlayback(); phase = Math.max(0,Math.min(6,index)); updatePhase(); }
-  function selectTier(index) {
-    tier = index;
-    document.querySelectorAll('[data-tier]').forEach(el => el.setAttribute('aria-pressed',String(Number(el.dataset.tier) === tier)));
-    $('tierDescription').textContent = tier < 0 ? copy[lang].tierDefault : copy[lang].tiers[tier];
-    sceneApi?.setTier(tier);
-  }
+  function selectPhase(index) { stopPlayback(); retry = false; phase = Math.max(0,Math.min(6,index)); updatePhase(); }
   $('phaseRail').addEventListener('click',event => { const b = event.target.closest('[data-phase]'); if(b) selectPhase(Number(b.dataset.phase)); });
   $('phaseRail').addEventListener('keydown',event => {
     if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
@@ -105,7 +104,6 @@
     selectPhase(event.key === 'Home' ? 0 : event.key === 'End' ? 6 : (phase + (event.key === 'ArrowRight' ? 1 : 6)) % 7);
     $('phase-'+phase).focus();
   });
-  document.querySelectorAll('[data-tier]').forEach(el => el.addEventListener('click',() => selectTier(Number(el.dataset.tier))));
   $('previousStep').onclick = () => selectPhase(phase-1);
   $('nextStep').onclick = () => selectPhase(phase+1);
   $('playWorkflow').onclick = () => {
@@ -118,7 +116,8 @@
     icons();
     timer = setInterval(() => { if(phase < 6) { phase++; updatePhase(); } else stopPlayback(); },4200);
   };
-  $('resetView').onclick = () => { selectTier(-1); sceneApi?.reset(); };
+  $('resetView').onclick = () => { selectPhase(0); sceneApi?.reset(); };
+  $('retryDemo').onclick = () => { stopPlayback(); retry = !retry; phase = retry ? 2 : 3; updatePhase(); };
   function setMotion(value) {
     paused = value;
     $('motion').setAttribute('aria-pressed',String(paused));
@@ -129,15 +128,16 @@
     icons();
   }
   $('motion').onclick = () => setMotion(!paused);
-  $('language').onclick = () => window.I18N.setLang(lang === 'zh' ? 'en' : 'zh');
   window.I18N?.onChange(value => { lang = value; renderCopy(); });
   reduced.addEventListener('change',event => { setMotion(event.matches); if(event.matches) stopPlayback(); });
   document.addEventListener('visibilitychange',() => { if(document.hidden) stopPlayback(); });
   renderCopy();
   setMotion(paused);
   import('/js/welcome_scene.js').then(module => {
-    sceneApi = module.createScene($('scene'), { onSelect:selectTier, paused });
+    sceneApi = module.createScene($('scene'), { onSelect:selectPhase, paused });
     sceneApi.setPhase(phase);
+    sceneApi.setRetry(retry);
+    sceneApi.setLabels(copy[lang].phases.map(row=>row[0]));
     $('sceneFallback').hidden = true;
   }).catch(error => {
     console.warn('3D presentation unavailable:',error.message);

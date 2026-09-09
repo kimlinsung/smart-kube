@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import time
 import uuid
 import re
@@ -12,7 +11,7 @@ import json
 from flask import Blueprint, Response, current_app, jsonify, request, send_file, session, stream_with_context
 from werkzeug.utils import secure_filename
 
-from . import agent, audit, auth, db, jobs, k8s_client, model_settings, paper_jobs, presence, task_events
+from . import agent, audit, auth, db, jobs, k8s_client, model_settings, paper_jobs, presence, task_events, project_lifecycle, file_preview
 from .config import UPLOAD_DIR
 from .request_meta import client_ip
 
@@ -738,13 +737,36 @@ def paper_workspace_file_content(workspace_id, file_id):
         return jsonify({"error": "文件不存在"}), 404
     if not os.path.isfile(item["stored_path"]):
         return jsonify({"error": "文件已不在服务器"}), 410
-    with open(item["stored_path"], "rb") as handle:
-        raw = handle.read(200_001)
-    if len(raw) > 200_000:
-        return jsonify({"error": "文件超过 200 KB，请下载后查看"}), 413
-    if b"\x00" in raw:
-        return jsonify({"error": "二进制文件不支持在线预览"}), 415
-    return jsonify({"content": raw.decode("utf-8", errors="replace"), "filename": item["original_name"]})
+    try:
+        preview = file_preview.read_preview(item)
+    except ImportError:
+        return jsonify({"error": "服务器缺少此格式的预览依赖，请下载查看"}), 415
+    except Exception:
+        return jsonify({"error": "文件损坏、加密或超出预览限制，请下载查看"}), 422
+    preview["url"] = f"/api/paper/workspaces/{workspace_id}/files/{file_id}/preview"
+    response = jsonify(preview)
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
+
+
+@bp.get("/paper/workspaces/<workspace_id>/files/<int:file_id>/preview")
+@auth.login_required
+def paper_workspace_file_preview(workspace_id, file_id):
+    workspace, item, _ = _authorized_workspace_file(workspace_id, file_id, request.current_user)
+    if not workspace or not item:
+        return jsonify({"error": "文件不存在"}), 404
+    media = file_preview.MEDIA.get(os.path.splitext(item["original_name"])[1].lower())
+    if not media:
+        return jsonify({"error": "此格式不能作为活动文档打开"}), 415
+    if not os.path.isfile(item["stored_path"]):
+        return jsonify({"error": "文件已不在服务器"}), 410
+    if os.path.getsize(item["stored_path"]) > 20 * 1024 * 1024:
+        return jsonify({"error": "文件超过预览限制"}), 413
+    response = send_file(item["stored_path"], mimetype=media[1], conditional=True, as_attachment=False)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Content-Security-Policy"] = "sandbox; default-src 'none'"
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
 
 
 @bp.get("/paper/workspaces/<workspace_id>/files/<int:file_id>/download")
@@ -830,43 +852,7 @@ def reclaim_paper_workspace(workspace_id):
 @bp.delete("/paper/workspaces/<workspace_id>")
 @auth.login_required
 def delete_paper_workspace(workspace_id):
-    """彻底删除单个工作区及其关联实验、Kubernetes 资源和存储产物。"""
-    u = request.current_user
-    workspace = db.get_paper_workspace(workspace_id, include_details=False)
-    if not workspace:
-        return jsonify({"error": "工作区不存在"}), 404
-    if workspace["user_id"] != u["id"]:
-        return jsonify({"error": "仅实验所有者可以删除工作区"}), 403
-    if workspace["status"] in {"queued", "running"}:
-        return jsonify({"error": "工作流仍在执行，暂不能删除"}), 409
-
-    try:
-        deleted_pods = k8s_client.delete_pods_by_experiment(workspace["experiment_id"])
-    except Exception as exc:
-        return jsonify({"error": f"清理 Pod 失败：{exc}"}), 500
-
-    stored_paths = db.delete_experiment(workspace["experiment_id"])
-    for path in stored_paths:
-        try:
-            os.remove(path)
-        except OSError:
-            pass
-
-    workspace_root = os.path.realpath(
-        os.path.join(UPLOAD_DIR, str(u["id"]), "paper", workspace["id"])
-    )
-    paper_root = os.path.realpath(os.path.join(UPLOAD_DIR, str(u["id"]), "paper"))
-    if os.path.commonpath((paper_root, workspace_root)) == paper_root and workspace_root != paper_root:
-        shutil.rmtree(workspace_root, ignore_errors=True)
-
-    if session.get("current_experiment_id") == workspace["experiment_id"]:
-        session["current_experiment_id"] = db.ensure_default_experiment(u["id"])
-    audit.log(
-        u["id"], u["username"], "paper_workspace_delete",
-        json.dumps({"workspace_id": workspace_id, "deleted_pods": deleted_pods}),
-        source_ip=client_ip(),
-    )
-    return jsonify({"ok": True, "deleted_pods": deleted_pods})
+    return _delete_project_response(workspace_id, "workspace")
 
 
 @bp.post("/upload/to_pod")
@@ -1232,27 +1218,50 @@ def public_shared_file_download(token, file_id):
 @bp.delete("/experiments/<int:exp_id>")
 @auth.login_required
 def delete_experiment(exp_id):
+    return _delete_project_response(exp_id, "experiment")
+
+
+def _delete_project_response(project_id, kind):
     u = request.current_user
-    exp = db.get_experiment(exp_id)
-    if not exp:
-        return jsonify({"error": "实验不存在"}), 404
-    if u["role"] != "admin" and exp["user_id"] != u["id"]:
-        return jsonify({"error": "无权删除他人实验"}), 403
     try:
-        deleted_pods = k8s_client.delete_pods_by_experiment(exp_id)
-    except Exception as e:
-        return jsonify({"error": f"清理 Pod 失败：{e}"}), 500
-    stored_paths = db.delete_experiment(exp_id)
-    for path in stored_paths:
-        try:
-            os.remove(path)
-        except OSError:
-            pass
-    # 当前实验若被删，回退到该用户的默认实验（必要时新建）
-    if session.get("current_experiment_id") == exp_id:
-        session["current_experiment_id"] = db.ensure_default_experiment(u["id"])
-    audit.log(u["id"], u["username"], "delete_experiment", f"{exp_id}:pods={len(deleted_pods)}")
-    return jsonify({"ok": True, "deleted_pods": deleted_pods})
+        result = project_lifecycle.delete_project(u, project_id, kind, client_ip(), UPLOAD_DIR)
+    except project_lifecycle.ProjectError as exc:
+        return jsonify({"error": str(exc)}), exc.status
+    _repair_current_experiment(u)
+    return jsonify(result)
+
+
+def _repair_current_experiment(user):
+    current = session.get("current_experiment_id")
+    if current and not db.get_experiment(current):
+        session["current_experiment_id"] = db.ensure_default_experiment(user["id"])
+        session.pop("uploaded_file", None)
+        session.pop("uploaded_file_id", None)
+
+
+@bp.post("/experiments/batch-delete")
+@auth.login_required
+def delete_experiments_batch():
+    return _delete_batch_response("experiment")
+
+
+@bp.post("/paper/workspaces/batch-delete")
+@auth.login_required
+def delete_workspaces_batch():
+    return _delete_batch_response("workspace")
+
+
+def _delete_batch_response(kind):
+    data = request.get_json(silent=True)
+    try:
+        result = project_lifecycle.delete_batch(
+            request.current_user, data.get("ids") if isinstance(data, dict) else None,
+            kind, source_ip=client_ip(), upload_root=UPLOAD_DIR,
+        )
+    except project_lifecycle.ProjectError as exc:
+        return jsonify({"error": str(exc)}), exc.status
+    _repair_current_experiment(request.current_user)
+    return jsonify(result)
 
 
 # --------------------------------------------------------------------------------------

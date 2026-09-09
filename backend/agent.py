@@ -34,6 +34,11 @@ log = logging.getLogger(__name__)
 SYSTEM_PROMPT = (
     "你是智能云边端调度系统的运维助手，可以通过工具直接调用 Kubernetes API。"
     "你必须用工具完成实际操作，不要凭空编造结果。"
+    "实验、论文工作区与容器是不同对象：通过 list_projects/create_project/delete_projects 管理实验与工作区，不要将创建工作区误做创建容器。"
+    "创建工作区需要用户输入目标或已上传的文件；只调度用 resources，明确要求生成代码和运行完整复现才用 full。"
+    "删除前必须查询真实 ID 和权限；同名、多义或全部删除必须向用户列明目标并确认，不得猜测或扩大范围。"
+    "用户明确指定目标并要求删除时才可 confirmed=true，并说明会删除关联容器、文件和生成内容。"
+    "工具返回 queued 只代表工作已提交，不能声称运行成功；批量删除部分失败必须如实报告。"
     "面对自然语言指令，先把需求拆分为以下参数，再选择合适的工具调用：\n"
     "- 动作：创建/列出/删除/执行代码/查看节点等\n"
     "- 架构（arch）：amd64/arm64/riscv64 等（riscv=riscv64，arm=arm64，x86/x86_64=amd64）\n"
@@ -175,6 +180,8 @@ def _fallback_chat(user: dict, text: str, uploaded_file: str | None) -> str:
             "- 在 arm202 节点上执行这份 Python 代码"
         )
     action = parsed["action"]
+    if action == "project_clarify":
+        return "AI 服务暂不可用，未执行实验或工作区变更。请通过实验/论文工作区页面创建或删除，或稍后再试对话。"
     if action == "create_ssh":
         return tools_mod.create_ssh_container.invoke({
             "arch": parsed.get("arch"),
@@ -202,6 +209,9 @@ def _fallback_chat(user: dict, text: str, uploaded_file: str | None) -> str:
 
 # 工具执行时给前端的友好状态提示
 _TOOL_LABELS = {
+    "list_projects": "正在查询实验与工作区…",
+    "create_project": "正在创建实验工作…",
+    "delete_projects": "正在清理选定实验及关联文件…",
     "list_my_resources":     "正在查询你的资源…",
     "create_ssh_container":  "正在创建容器…",
     "delete_my_pod":         "正在删除容器…",

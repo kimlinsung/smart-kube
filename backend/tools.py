@@ -11,11 +11,12 @@ import contextvars
 import json
 import os
 import re
+import shutil
 from typing import Callable, Optional
 
 from langchain_core.tools import tool
 
-from . import audit, db, k8s_client
+from . import audit, db, k8s_client, project_lifecycle
 from .config import UPLOAD_DIR
 
 # 使用 ContextVar 代替 threading.local，确保在 LangGraph 线程池中也能正确继承上下文
@@ -275,8 +276,110 @@ def admin_list_all_pods() -> str:
     return "\n".join(lines)
 
 
+@tool
+def list_projects() -> str:
+    """列出可见的实验和论文工作区的真实 ID、名称、状态、删除权限。按名称删除前必须先查询并明确唯一目标。"""
+    user = _user()
+    experiments = db.list_experiments(None if _is_admin() else user["id"])
+    result = []
+    for exp in experiments:
+        workspace = db.get_paper_workspace_for_experiment(exp["id"], include_details=False)
+        result.append({"experiment_id": exp["id"], "name": exp["name"],
+                       "can_delete": _is_admin() or exp["user_id"] == user["id"],
+                       "workspace_id": workspace["id"] if workspace else None,
+                       "status": workspace["status"] if workspace else None,
+                       "current_conversation": exp["id"] == _exp()})
+    return json.dumps(result, ensure_ascii=False)
+
+
+@tool
+def create_project(name: str, kind: str = "experiment", goal: str = "", mode: str = "resources", use_uploaded_file: bool = False) -> str:
+    """创建实验或论文工作区。kind=experiment 仅建实验；workspace 启动工作流。
+    工作区输入为用户明确提供的 goal，或 use_uploaded_file=true 使用当前对话已上传的文件。
+    mode=resources 只执行至调度，full 完整复现须用户明确要求。不会自动切换当前对话实验。
+    """
+    user = _user()
+    name, goal = name.strip(), goal.strip()
+    if not name or len(name) > 120 or len(goal) > 20000:
+        return "名称需为 1 到 120 字符，实验目标最多 20000 字符"
+    if kind not in {"experiment", "workspace"} or mode not in {"resources", "full"}:
+        return "项目类型或执行模式不正确"
+    source = None
+    if kind == "workspace":
+        if use_uploaded_file:
+            candidate = _file_ctx.get()
+            with db.cursor() as cur:
+                source = cur.execute("SELECT * FROM script_files WHERE user_id=? AND stored_path=?",
+                                     (user["id"], candidate)).fetchone()
+            root = os.path.realpath(os.path.join(UPLOAD_DIR, str(user["id"])))
+            if not source or not os.path.isfile(candidate) or os.path.commonpath((root, os.path.realpath(candidate))) != root:
+                return "没有可使用的本人上传文件，请先上传材料"
+            if os.path.getsize(candidate) > 20 * 1024 * 1024:
+                return "上传文件不能超过 20 MB"
+        elif not goal:
+            return "请提供实验目标或上传输入文件"
+        from flask import current_app
+        from . import paper_jobs
+        app = current_app._get_current_object()
+    exp = db.create_experiment(user["id"], name, goal)
+    if kind == "experiment":
+        _audit("experiment_create", {"experiment_id": exp["id"]})
+        return json.dumps({"ok": True, "experiment_id": exp["id"], "name": name}, ensure_ascii=False)
+    workspace = db.create_paper_workspace(user["id"], exp["id"], name, goal, mode, {})
+    directory = os.path.join(UPLOAD_DIR, str(user["id"]), "paper", workspace["id"])
+    try:
+        os.makedirs(directory, exist_ok=True)
+        filename = os.path.basename(source["original_name"]) if source else "request.md"
+        path = os.path.join(directory, "input" + os.path.splitext(filename)[1])
+        if source:
+            shutil.copyfile(source["stored_path"], path)
+        else:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("# " + name + "\n\n" + goal)
+        db.add_paper_workspace_file(workspace["id"], user["id"], filename, path, os.path.getsize(path), "")
+        if source and goal:
+            request_path = os.path.join(directory, "request.md")
+            with open(request_path, "w", encoding="utf-8") as handle:
+                handle.write("# User requirements\n\n" + goal)
+            db.add_paper_workspace_file(workspace["id"], user["id"], "request.md", request_path, os.path.getsize(request_path), "text/markdown")
+        workspace = db.get_paper_workspace(workspace["id"], user_id=user["id"])
+        task = paper_jobs.start_workspace_job(app, workspace, user, _source_ip_ctx.get())
+    except Exception:
+        db.update_paper_workspace(workspace["id"], status="failed", stage="intake")
+        raise
+    _audit("paper_workspace_create", {"workspace_id": workspace["id"], "experiment_id": exp["id"]})
+    return json.dumps({"ok": True, "workspace_id": workspace["id"], "experiment_id": exp["id"],
+                       "task_id": task["id"], "status": "queued"}, ensure_ascii=False)
+
+
+@tool
+def delete_projects(ids: list[str], kind: str = "experiment", confirmed: bool = False) -> str:
+    """按明确 ID 删除一个或多个实验/工作区及容器、文件、产物。用户明确要求删除这些目标后才可 confirmed=true。
+    禁止猜测 ID、模糊匹配或擅自扩大删除范围。当前对话实验不能在对话执行中删除。
+    """
+    if not confirmed:
+        return "删除不可恢复，请先向用户确认具体目标及关联文件、生成内容都会删除"
+    try:
+        values = [int(value) for value in ids] if kind == "experiment" else ids
+        values = project_lifecycle.validate_ids(values, kind)
+    except (ValueError, TypeError, project_lifecycle.ProjectError) as exc:
+        return "无效删除目标：" + str(exc)
+    results = []
+    for value in values:
+        workspace = db.get_paper_workspace(value, include_details=False) if kind == "workspace" else None
+        exp_id = workspace["experiment_id"] if workspace else value
+        if exp_id == _exp():
+            results.append({"id": value, "ok": False, "error": "不能删除当前正在执行对话的实验，请切换实验后删除，或等待对话结束后在列表删除"})
+            continue
+        results.extend(project_lifecycle.delete_batch(_user(), [value], kind, source_ip=_source_ip_ctx.get())["results"])
+    return json.dumps({"results": results, "ok": all(r["ok"] for r in results)}, ensure_ascii=False)
+
+
 # 工具注册：根据角色返回不同工具集
 USER_TOOLS = [
+    list_projects,
+    create_project,
+    delete_projects,
     list_my_resources,
     create_ssh_container,
     delete_my_pod,
@@ -361,6 +464,8 @@ def _detect_gpu(text: str) -> int:
 def fallback_parse(text: str) -> Optional[dict]:
     """无 LLM 时基于规则解析常见指令。"""
     t = text.strip()
+    if re.search(r"工作区|实验|workspace|experiment", t, re.I):
+        return {"action": "project_clarify"}
     arch_m = ARCH_PATTERN.search(t)
     count_m = COUNT_PATTERN.search(t)
     host_m = HOSTNAME_PATTERN.search(t)

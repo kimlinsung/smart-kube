@@ -28,7 +28,7 @@ Smart-Kube connects source materials, resource planning, Kubernetes placement, g
 
 The aim is a **traceable reproduction process**. A successfully executed program is not a guarantee that a paper's scientific conclusions have been reproduced.
 
-<a href="https://cloudedgeiot.top/welcome.html"><img src="docs/assets/compute-demo.gif" alt="Real UI recording of interactive Three.js device, edge and cloud selection" width="100%"></a>
+<a href="https://cloudedgeiot.top/welcome.html"><img src="docs/assets/compute-demo.gif" alt="Real UI recording of the interactive Three.js Agent workflow and scheduling retry" width="100%"></a>
 
 <table>
 <tr>
@@ -62,7 +62,7 @@ Compute-intensive experiment workloads.
 </tr>
 </table>
 
-The scene illustrates the architecture. Schedulability depends on actual nodes, images, drivers and capacity; not every inventoried device is a Kubernetes worker.
+The 3D scene illustrates Agent stages, evidence flow and scheduling retries, not live task status. Schedulability depends on actual nodes, images, drivers and capacity.
 
 ## Seven stages. One evidence chain.
 
@@ -80,14 +80,24 @@ The scene illustrates the architecture. Schedulability depends on actual nodes, 
 
 **Two modes:** stop after resource scheduling and reporting, or continue through code generation, execution and analysis. Reclaiming compute keeps artifacts; deleting a workspace removes its resources, uploaded and generated files, records and associated experiment.
 
+Experiments and workspaces support individual and batch deletion, plus creation and deletion through AI conversation. Batch cleanup reports per-item failures and protects active jobs. Switch conversation context before deleting its experiment, or delete from the list after the conversation finishes.
+
 > Preflight is a snapshot, not a reservation. Kubernetes makes the final admission and scheduling decision. Architecture, GPU and explicit host requirements remain hard constraints; relaxing node type is recorded. Image pulls and runtime readiness can still fail after placement.
 
 ## Built for the experiment loop
 
+<img src="docs/assets/workspace-studio.png" alt="Paper workspace with an interactive execution canvas, retry paths and stage evidence" width="100%">
+
+*Workspace interface example using demonstration data.*
+
+- **Execution canvas:** stage selection, zoom, focus mode and event replay, with separate paths for observed preflight failures, node-type fallbacks and analysis retries.
+- **Observability:** execution results, recorded stage spans, failures, placements and structured artifacts. Replay never re-executes a job.
+- **Local previews:** PDF pages/zoom, images/media, Markdown, code, CSV/TSV, JSON, notebooks and Word/Excel/PowerPoint content views. Private files never go to third-party preview services.
+
 | Capability | In practice |
 | :--- | :--- |
 | **Persistent workspaces** | Inputs, configuration, code, events, outputs and reports stay associated with one experiment. |
-| **Conversational operations** | A LangGraph tool-calling agent manages authorized Kubernetes resources. |
+| **Conversational operations** | Create, list and delete authorized experiments, workspaces and Kubernetes resources. |
 | **Browser execution** | Web Shell, script upload and container execution reduce context switching. |
 | **Model selection** | Select configured providers and models; jobs retain the model selected at submission. |
 | **Collaboration** | Collaborator views and revocable share links, with operation and credential boundaries. |
@@ -149,7 +159,7 @@ backend/
   routes_shell.py, task_events.py WebSockets and task updates
 frontend/
   welcome.html                   Public research overview
-  js/welcome_scene.js             Interactive compute scene
+  js/welcome_scene.js             Interactive Agent workflow
   paper_workspace.html            Experiment workspace
 tests/                            Backend regression coverage
 docs/assets/                      Screenshots and GIFs

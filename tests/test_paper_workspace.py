@@ -857,6 +857,7 @@ class PaperWorkspaceApiTest(TemporaryDatabaseTest):
         )
         db.update_paper_workspace(workspace["id"], status="completed", stage="completed")
 
+        db.update_execution_task(task["id"], status="succeeded")
         with mock.patch("backend.routes_api.k8s_client.delete_pods_by_experiment", return_value=["unit-a"]):
             response = self.client.delete(f"/api/paper/workspaces/{workspace['id']}")
 

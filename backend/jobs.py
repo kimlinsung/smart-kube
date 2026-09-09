@@ -40,6 +40,7 @@ def start_chat_task(app, user, message, uploaded_file, experiment_id, source_ip)
         message[:80],
         "等待 AI 助手处理",
         {"message": message, "llm_profile": user.get("llm_profile", "default")},
+        require_experiment=True,
     )
     task_events.publish_task(task["id"])
     _run_in_thread(
@@ -144,6 +145,7 @@ def start_script_task(app, user, script_file, experiment_id, options, source_ip)
             "hostname": options.get("hostname"),
             "timeout": options.get("timeout"),
         },
+        require_experiment=True,
     )
     task_events.publish_task(task["id"])
     _run_in_thread(

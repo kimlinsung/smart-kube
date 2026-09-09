@@ -217,6 +217,58 @@ curl -fsSI http://cloudedgeiot.top/
 
 ## Code Ownership Map
 
+### Project Lifecycle and Conversation
+
+- `backend/project_lifecycle.py` is the shared deletion service for REST and
+  Agent tools. Preserve owner/admin checks; collaborators cannot delete.
+- Single and batch deletion remove compute, uploaded inputs, generated files,
+  workspace archives and experiment records. Reclaim remains separate and
+  retains archives. Do not treat failed Kubernetes cleanup as successful.
+- Batch routes: `POST /api/experiments/batch-delete` and
+  `POST /api/paper/workspaces/batch-delete`, body `{ "ids": [...] }`, up to 50.
+  Inspect every item's `ok` and `error`; HTTP 200 can contain partial failures.
+- Queued/running tasks block deletion. Admission of background jobs and project
+  deletion share `db.project_lifecycle_lock`; keep the app single-instance.
+- `list_projects`, `create_project`, `delete_projects` enforce conversational
+  project permissions. Uploaded inputs must belong to the user and be copied
+  into the new workspace, never moved or accepted as arbitrary model paths.
+- A running conversation cannot delete its own experiment. Switch conversation
+  context first or delete from the list after completion. Never silently delete
+  active task records or report a queued workspace as completed.
+- Public Three.js visualizes the Agent process and scheduling retry, not a
+  hardware topology or live task telemetry. Keep the previous public-page theme.
+- Browser regression checks: with `playwright` and `pngjs` available, serve
+  `frontend/` locally, then run `node tests/browser_ui.cjs`. Set `PREVIEW_URL`
+  and `CHROMIUM_PATH` as needed. CRUD requests are mocked to avoid deleting data.
+- Python regression suite: `python -m unittest discover -s tests -p 'test_*.py'`.
+
+### Workspace Studio and File Previews
+
+- `frontend/js/workspace_flow.js` uses the vendored Cytoscape engine for the
+  operational canvas. It renders actual events and recorded scheduling
+  fallbacks. Replaying the event cursor is read-only; it must never rerun jobs.
+- Preserve event history when merging lightweight status updates. The status
+  endpoint returns only allowlisted `transition` fields, not arbitrary event
+  data or model traces. Five-second recovery polling runs only for the visible
+  active workspace; keep expensive code/report reads on demand.
+- `workspace_studio.css` is scoped to the paper workbench. Do not apply its
+  compact navigation or canvas layout to public pages or unrelated views.
+- `backend/file_preview.py` handles bounded content extraction; media is served
+  by the authenticated workspace `/files/<id>/preview` endpoint. Both it and
+  `/content` retain the same experiment ownership/collaboration checks.
+- PDF.js 6.3.289 is vendored under `frontend/vendor/pdfjs/`, including its worker,
+  character maps, fonts and licenses. It is loaded only when a PDF is opened.
+  Do not send private files to remote Office or PDF preview services.
+- Word/PPTX previews are extracted content views, not exact original layouts.
+  XLSX uses read-only, cached-value loading; it does not evaluate formulas.
+  HTML/SVG/code are displayed as inert source, never active same-origin pages.
+- Keep size, archive expansion, row/column, text and PDF canvas-pixel limits.
+  Markdown is sanitized and remote images removed. Do not enable document
+  scripting, macros, XFA forms, or automatic notebook execution.
+- Regression commands: `node tests/browser_ui.cjs` and
+  `node tests/workspace_studio.cjs`. An optional `PDF_PREVIEW_PATH` points to a
+  synthetic test PDF. Fixtures are mocked and must not mutate live projects.
+
 | Area | Primary files | Notes |
 | --- | --- | --- |
 | App bootstrap/static pages | `backend/app.py` | Flask app, startup migration hooks, static file and page handling. |

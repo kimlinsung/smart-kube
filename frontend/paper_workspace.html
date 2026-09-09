@@ -6,6 +6,7 @@
 <title>智能云边端调度系统 · 论文工作区</title>
 <link rel="stylesheet" href="/css/style.css" />
 <link rel="stylesheet" href="/css/paper_workspace.css" />
+<link rel="stylesheet" href="/css/workspace_studio.css" />
 </head>
 <body data-page="paper_workspace">
 <div class="layout">
@@ -19,6 +20,8 @@
           新建工作
         </button>
         <div class="rail-label">实验工作记录</div>
+        <div class="history-search"><i data-lucide="search"></i><input id="workspaceSearch" type="search" placeholder="搜索实验工作" aria-label="搜索实验工作" /></div>
+        <div class="history-selection"><label><input type="checkbox" id="selectWorkspaces" /> 全选</label><button class="danger" id="deleteSelectedWorkspaces" disabled>删除所选 (0)</button></div>
         <div class="workspace-history" id="workspaceHistory"></div>
       </aside>
 
@@ -64,32 +67,56 @@
             <time id="workspaceUpdated"></time>
           </div>
 
-          <section class="workflow-band">
-            <div class="section-heading">
-              <div><span class="eyebrow">WORKFLOW</span><h2>实验流程</h2></div>
-              <span class="live-indicator" id="liveIndicator"><i></i>实时连接</span>
+          <section class="workflow-band" id="flowStudio">
+            <div class="studio-toolbar">
+              <div class="studio-heading"><i data-lucide="workflow"></i><div><h2>Agent 工作流</h2><span id="flowRunId"></span></div></div>
+              <div class="studio-tools">
+                <span class="live-indicator offline" id="liveIndicator"><i></i>正在连接</span>
+                <button class="icon-btn" id="flowFit" title="适配画布" aria-label="适配画布"><i data-lucide="scan"></i></button>
+                <button class="icon-btn" id="flowZoomOut" title="缩小" aria-label="缩小"><i data-lucide="minus"></i></button>
+                <span id="flowZoom">100%</span>
+                <button class="icon-btn" id="flowZoomIn" title="放大" aria-label="放大"><i data-lucide="plus"></i></button>
+                <button class="icon-btn" id="flowFocus" title="专注模式" aria-label="专注模式" aria-pressed="false"><i data-lucide="maximize-2"></i></button>
+              </div>
             </div>
-            <div id="workflowGraph" aria-label="配置、调度、分析、报告和资源生命周期流程图"></div>
+            <div class="flow-summary" id="flowSummary"></div>
+            <div class="flow-stage">
+              <div class="flow-canvas-wrap">
+                <div class="flow-legend"><span><i class="success"></i>完成</span><span><i class="active"></i>执行中</span><span><i class="retry"></i>重试 / 回退</span><span><i class="failed"></i>失败</span></div>
+                <div id="workflowGraph" role="img" aria-label="可交互的 Agent 执行与回退路径"></div>
+                <div class="flow-stage-nav" id="stageNav" aria-label="选择流程阶段"></div>
+              </div>
+              <aside class="stage-inspector" id="stageInspector" aria-live="polite"></aside>
+            </div>
+            <div class="flow-replay">
+              <button class="icon-btn" id="flowPlay" title="回放执行记录" aria-label="回放执行记录" aria-pressed="false"><i data-lucide="play"></i></button>
+              <input id="flowTimeline" type="range" min="0" max="0" value="0" aria-label="执行事件时间轴" />
+              <span id="flowEventPosition">0 / 0</span>
+              <button id="flowLive" class="flow-live active" title="返回最新执行状态"><i data-lucide="radio"></i>实时</button>
+            </div>
+            <div class="flow-event-caption" id="flowEventCaption" role="status"></div>
           </section>
 
           <div class="workspace-grid">
             <div class="workspace-column">
-              <section class="workspace-section">
-                <div class="section-heading"><div><span class="eyebrow">INPUTS</span><h2>输入文件</h2></div><b id="fileCount">0</b></div>
+              <nav class="workspace-panel-tabs" id="workspacePanelTabs" role="tablist" aria-label="工作区观测视图"><button type="button" role="tab" data-panel="telemetry" aria-selected="true"><i data-lucide="activity"></i>运行观测</button><button type="button" role="tab" data-panel="files" aria-selected="false"><i data-lucide="files"></i>文件产物</button><button type="button" role="tab" data-panel="events" aria-selected="false"><i data-lucide="list-tree"></i>执行事件</button></nav>
+              <section class="workspace-section" data-workspace-panel="files" hidden>
+                <div class="section-heading"><div><span class="eyebrow">ARTIFACTS</span><h2>文件与实验产物</h2></div><b id="fileCount">0</b></div>
                 <div class="artifact-list" id="artifactList"></div>
               </section>
 
-              <section class="workspace-section telemetry-section">
+              <section class="workspace-section telemetry-section" data-workspace-panel="telemetry">
                 <div class="section-heading"><div><span class="eyebrow">OBSERVABILITY</span><h2>运行观测</h2></div></div>
                 <div class="metric-row" id="metricRow"></div>
                 <div class="chart-grid">
-                  <div><h3>阶段耗时</h3><div class="paper-chart" id="durationChart"></div></div>
+                  <div><h3>阶段记录跨度</h3><div class="paper-chart" id="durationChart"></div></div>
                   <div><h3>资源分布</h3><div class="paper-chart" id="resourceChart"></div></div>
                 </div>
               </section>
 
-              <section class="workspace-section">
-                <div class="section-heading"><div><span class="eyebrow">EVENT STREAM</span><h2>过程记录</h2></div><span id="eventCount"></span></div>
+              <section class="workspace-section" data-workspace-panel="events" hidden>
+                <div class="section-heading"><div><span class="eyebrow">EVENT STREAM</span><h2>执行事件</h2></div><span id="eventCount"></span></div>
+                <div class="event-filters"><select id="eventFilter" aria-label="事件类型"><option value="all">全部事件</option><option value="failure">失败与回退</option><option value="execution">运行结果</option></select><input id="eventSearch" type="search" placeholder="搜索事件" aria-label="搜索事件" /></div>
                 <ol class="workspace-events" id="workspaceEvents"></ol>
               </section>
             </div>
@@ -103,6 +130,7 @@
                 <button data-tab="analysis" type="button">分析</button>
                 <button data-tab="report" type="button">报告</button>
               </div>
+              <div class="inspector-tools"><span>阶段产物</span><button class="icon-btn" id="inspectorRaw" title="查看原始数据" aria-label="查看原始数据" aria-pressed="false"><i data-lucide="braces"></i></button></div>
               <div class="inspector-body" id="inspectorBody"></div>
               <a class="report-download" id="downloadReport" href="#" hidden>下载 Markdown 报告</a>
             </aside>
@@ -129,7 +157,7 @@
       </button>
       <button class="mode-option" type="button" data-workspace-mode="full">
         <span class="mode-option-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 4h14v16H5zM8 8h8M8 12h5M8 16h7"/></svg></span>
-        <span><b>完整流程</b><small>生成配置与代码，调度执行后分析并生成 Markdown 报告</small></span>
+        <span><b>完整流程</b><small>理解与规划、调度成功后生成代码，执行并分析报告</small></span>
         <svg class="mode-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
       </button>
     </div>
@@ -171,9 +199,10 @@
 </div>
 
 <div class="file-preview-backdrop" id="filePreviewBackdrop" hidden>
-  <section class="file-preview-dialog" role="dialog" aria-modal="true">
-    <header><b id="previewFilename"></b><button class="icon-btn" id="closePreview" type="button" aria-label="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6 6 18"/></svg></button></header>
-    <pre id="filePreview"></pre>
+  <section class="file-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="previewFilename">
+    <header><div class="preview-heading"><i data-lucide="file-scan"></i><div><b id="previewFilename"></b><small id="previewMeta"></small></div></div><div class="preview-actions"><a id="previewDownload" class="icon-btn" title="下载原文件" aria-label="下载原文件"><i data-lucide="download"></i></a><button class="icon-btn" id="closePreview" type="button" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button></div></header>
+    <div class="preview-toolbar" id="previewToolbar"></div>
+    <div id="filePreview" class="preview-body"></div>
   </section>
 </div>
 
@@ -181,9 +210,12 @@
 <script src="/vendor/echarts.min.js"></script>
 <script src="/vendor/marked.min.js"></script>
 <script src="/vendor/purify.min.js"></script>
+<script src="/vendor/lucide.min.js"></script>
 <script src="/js/api.js"></script>
 <script src="/js/app.js"></script>
 <script src="/js/chat.js"></script>
+<script src="/js/workspace_flow.js"></script>
+<script src="/js/file_preview.js"></script>
 <script src="/js/paper_workspace.js"></script>
 </body>
 </html>

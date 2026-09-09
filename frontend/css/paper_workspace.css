@@ -294,3 +294,12 @@ body[data-page="paper_workspace"] > .assistant-fab { display: none; }
     .share-link-controls { grid-template-columns: minmax(0, 1fr) 34px; }
     .share-link-controls #toggleShare { grid-column: 1 / -1; }
 }
+.history-selection { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 0 14px; }
+.history-selection label { display:flex; align-items:center; gap:6px; white-space:nowrap; }
+.history-selection button { font-size:12px; padding:6px 8px; }
+.history-row { display:flex; align-items:center; gap:5px; min-width:0; }
+.history-row .history-item { flex:1; min-width:0; }
+.history-row .history-delete { width:30px; height:32px; padding:6px; flex:none; }
+.history-delete svg { width:16px; height:16px; }
+.history-row input { flex:none; }
+.workspace-events .event-empty .event-content { grid-column:1 / -1; }

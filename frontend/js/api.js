@@ -112,6 +112,7 @@ const API = {
     },
     reclaimPaperWorkspace(id) { return this.post(`/api/paper/workspaces/${encodeURIComponent(id)}/reclaim`); },
     deletePaperWorkspace(id) { return this.del(`/api/paper/workspaces/${encodeURIComponent(id)}`); },
+    deletePaperWorkspaces(ids) { return this.post('/api/paper/workspaces/batch-delete', { ids }); },
     uploadToPod(file, podName, destDir='/tmp') {
         const fd = new FormData();
         fd.append('file', file);
@@ -145,6 +146,7 @@ const API = {
     createExperiment(name, description) { return this.post('/api/experiments', { name, description }); },
     enterExperiment(id) { return this.post(`/api/experiments/${id}/enter`); },
     deleteExperiment(id) { return this.del('/api/experiments/' + id); },
+    deleteExperiments(ids) { return this.post('/api/experiments/batch-delete', { ids }); },
     experimentSharing(id) { return this.get(`/api/experiments/${id}/sharing`); },
     addExperimentCollaborator(id, username) {
         return this.post(`/api/experiments/${id}/collaborators`, { username });

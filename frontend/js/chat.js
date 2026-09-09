@@ -40,9 +40,9 @@ function renderBubbleMarkdown(bubble, text) {
 }
 
 const SUGGESTIONS = [
+    '列出我的实验和论文工作区',
+    '创建一个名为协同推理的实验',
     '创建一个 riscv 架构的 Ubuntu SSH 容器',
-    '列出我的资源',
-    '批量创建 3 个 Ubuntu SSH 容器',
 ];
 
 function injectAssistant() {

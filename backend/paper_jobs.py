@@ -610,13 +610,13 @@ def _analysis_telemetry(workspace):
     phase_bounds = {}
     for event in events:
         phase = event.get("phase")
-        if phase not in {"config", "code", "schedule", "execute", "analysis", "report"}:
+        if phase not in {"intake", "config", "code", "schedule", "execute", "analysis", "report"}:
             continue
         bounds = phase_bounds.setdefault(phase, [event["created_at"], event["created_at"]])
         bounds[0] = min(bounds[0], event["created_at"])
         bounds[1] = max(bounds[1], event["created_at"])
     durations = [
-        {"phase": phase, "seconds": max(1, bounds[1] - bounds[0] + 1)}
+        {"phase": phase, "seconds": max(0, bounds[1] - bounds[0])}
         for phase, bounds in phase_bounds.items()
     ]
     return {
@@ -642,6 +642,7 @@ def start_workspace_job(app, workspace, user, source_ip):
         workspace["name"],
         "等待文档理解 Agent 读取正文",
         {"workspace_id": workspace["id"], "mode": workspace["mode"], "llm_profile": user.get("llm_profile", "default")},
+        require_experiment=True,
     )
     task_events.publish_task(task["id"])
     _run_in_thread(app, _execute_workspace, workspace["id"], task["id"], user, source_ip)
@@ -850,6 +851,10 @@ def _execute_workspace(workspace_id, task_id, user, source_ip):
 
 
 def start_analysis_retry(app, workspace, user, source_ip):
+    db.add_paper_workspace_event(
+        workspace["id"], "analysis", "retry_requested", "用户请求返回分析阶段",
+        data={"from": workspace["stage"], "to": "analysis", "attempt": workspace.get("retries", 0) + 1},
+    )
     db.update_paper_workspace(
         workspace["id"], status="running", stage="analysis", finished_at=None
     )
@@ -860,6 +865,7 @@ def start_analysis_retry(app, workspace, user, source_ip):
         f"重新分析 {workspace['name']}",
         "等待重新分析",
         {"workspace_id": workspace["id"], "retry": workspace.get("retries", 0) + 1, "llm_profile": user.get("llm_profile", "default")},
+        require_experiment=True,
     )
     task_events.publish_task(task["id"])
     _run_in_thread(app, _execute_analysis_retry, workspace["id"], task["id"], user, source_ip)

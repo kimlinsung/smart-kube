@@ -15,7 +15,7 @@
 
       <div class="toolbar">
         <div class="left"><span id="expHint"><span class="spinner"></span> 加载中…</span></div>
-        <div class="right"><button id="btnNew" class="primary">+ 新建实验</button></div>
+        <div class="right"><label><input type="checkbox" id="selectPage" /> 本页全选</label><button id="deleteSelected" class="danger" disabled>删除所选 (0)</button><button id="btnNew" class="primary">+ 新建实验</button></div>
       </div>
       <div id="expGrid" class="exp-grid"></div>
       <div id="expPagination" class="exp-pagination" style="display:none;"></div>
@@ -32,6 +32,18 @@ const PAGE_SIZE = 18;
 let ALL_EXPS = [];
 let CURRENT_EXP_ID = null;
 let PAGE = 1;
+const SELECTED = new Set();
+let deleting = false;
+const canDelete = exp => exp.access_role !== 'collaborator' && (exp.user_id === ME?.id || ME?.role === 'admin');
+function updateSelection() {
+    const items = ALL_EXPS.slice((PAGE - 1) * PAGE_SIZE, PAGE * PAGE_SIZE).filter(canDelete);
+    const count = items.filter(exp => SELECTED.has(exp.id)).length;
+    document.getElementById('selectPage').checked = items.length > 0 && count === items.length;
+    document.getElementById('selectPage').indeterminate = count > 0 && count < items.length;
+    document.getElementById('selectPage').disabled = deleting || !items.length;
+    document.getElementById('deleteSelected').textContent = deleting ? '正在删除…' : `删除所选 (${SELECTED.size})`;
+    document.getElementById('deleteSelected').disabled = deleting || !SELECTED.size;
+}
 
 function fmtCount(label, n, cls) { return `<span class="badge ${cls}">${label} ${n}</span>`; }
 
@@ -46,6 +58,7 @@ function renderCard(exp) {
     return `
       <div class="exp-card ${isCurrent ? 'current' : ''}">
           <div class="exp-top">
+              ${canManage ? `<input type="checkbox" data-select="${exp.id}" aria-label="选择 ${escapeHtml(exp.name)}" ${SELECTED.has(exp.id) ? 'checked' : ''} ${deleting ? 'disabled' : ''} />` : ''}
               <span class="exp-avatar">${escapeHtml(initial)}</span>
               <div style="min-width:0;flex:1;">
                   <div class="exp-name-row">
@@ -88,6 +101,7 @@ function renderPagination(total) {
 }
 
 function render() {
+    updateSelection();
     const grid = document.getElementById('expGrid');
     const hint = document.getElementById('expHint');
     if (!ALL_EXPS.length) {
@@ -111,6 +125,7 @@ async function loadExperiments() {
     try {
         const r = await API.listExperiments();
         ALL_EXPS = r.experiments || [];
+        for (const id of SELECTED) if (!ALL_EXPS.some(exp => exp.id === id && canDelete(exp))) SELECTED.delete(id);
         CURRENT_EXP_ID = r.current_experiment_id || null;
         render();
     } catch (e) {
@@ -131,7 +146,7 @@ document.getElementById('expGrid').addEventListener('click', async e => {
             render(); window.dispatchEvent(new CustomEvent('experiment:changed'));
         } catch (err) { alert('进入失败：' + err.message); }
     } else if (act === 'del') {
-        if (!confirm(`确认删除实验「${name}」？\n该实验下的所有云边端容器都会被一并删除，且不可恢复。`)) return;
+        if (deleting || !confirm(`确认删除实验「${name}」？\n所有容器、关联工作区、上传文件、生成代码、报告与过程记录都会被删除，且不可恢复。`)) return;
         try {
             const r = await API.deleteExperiment(id);
             const me = await API.me(); renderShell(me); ME = me; CURRENT_EXP_ID = me.current_experiment_id;
@@ -150,6 +165,41 @@ document.getElementById('btnNew').onclick = async () => {
         await loadExperiments(); window.dispatchEvent(new CustomEvent('experiment:changed'));
     } catch (err) { alert('创建失败：' + err.message); }
 };
+
+document.getElementById('expGrid').addEventListener('change', event => {
+    const id = Number(event.target.dataset.select);
+    if (!id) return;
+    event.target.checked ? SELECTED.add(id) : SELECTED.delete(id);
+    updateSelection();
+});
+document.getElementById('selectPage').onchange = event => {
+    ALL_EXPS.slice((PAGE - 1) * PAGE_SIZE, PAGE * PAGE_SIZE).filter(canDelete).forEach(exp => {
+        event.target.checked ? SELECTED.add(exp.id) : SELECTED.delete(exp.id);
+    });
+    render();
+};
+document.getElementById('deleteSelected').onclick = async () => {
+    const ids = [...SELECTED];
+    if (deleting || !ids.length || !confirm(`彻底删除选中的 ${ids.length} 个实验？\n包括容器、工作区、上传文件、生成代码和报告，不可恢复。`)) return;
+    deleting = true; render();
+    try {
+        const failures = [];
+        for (let i = 0; i < ids.length; i += 50) {
+            const result = await API.deleteExperiments(ids.slice(i, i + 50));
+            for (const item of result.results) {
+                if (item.ok) SELECTED.delete(item.id); else failures.push(`#${item.id}: ${item.error}`);
+            }
+        }
+        ME = await API.me(); renderShell(ME);
+        await loadExperiments();
+        window.dispatchEvent(new CustomEvent('experiment:changed'));
+        if (failures.length) alert('以下实验未删除：\n' + failures.join('\n'));
+    } catch (error) { alert('删除未完成：' + error.message); }
+    finally { deleting = false; render(); }
+};
+window.addEventListener('task:update', event => {
+    if (event.detail?.kind === 'chat' && ['succeeded', 'failed'].includes(event.detail.status)) loadExperiments();
+});
 
 (async () => {
     ME = await loadMe();

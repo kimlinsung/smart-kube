@@ -24,6 +24,9 @@
         durationChart: null, resourceChart: null, reloadTimer: null, summaryTimer: null,
         workflowMode: null, detailsStale: false,
         launchMode: null,
+        selected: new Set(), deleting: false,
+        flow: null, search: '', loadingStatus: false, loadVersion: 0,
+        inspectorRaw: false,
     };
 
     const $ = selector => document.querySelector(selector);
@@ -145,27 +148,48 @@
 
     function renderHistory() {
         const root = $('#workspaceHistory');
+        const manageable = state.summaries.filter(item => item.access_role !== 'collaborator' && !ACTIVE.has(item.status));
+        const eligible = manageable.filter(item => item.name.toLowerCase().includes(state.search));
+        for (const id of state.selected) if (!manageable.some(item => item.id === id)) state.selected.delete(id);
+        const checked = eligible.filter(item => state.selected.has(item.id)).length;
+        $('#selectWorkspaces').checked = eligible.length > 0 && checked === eligible.length;
+        $('#selectWorkspaces').indeterminate = checked > 0 && checked < eligible.length;
+        $('#selectWorkspaces').disabled = state.deleting || !eligible.length;
+        $('#deleteSelectedWorkspaces').disabled = state.deleting || !state.selected.size;
+        $('#deleteSelectedWorkspaces').textContent = state.deleting ? '正在删除…' : `删除所选 (${state.selected.size})`;
         if (!state.summaries.length) {
             root.innerHTML = '<div class="history-empty">暂无工作记录</div>';
             return;
         }
-        root.innerHTML = state.summaries.map(item => `
+        root.innerHTML = state.summaries.filter(item => item.name.toLowerCase().includes(state.search)).map(item => `
+          <div class="history-row">
+          ${item.access_role !== 'collaborator' ? `<input type="checkbox" data-select-workspace="${item.id}" aria-label="选择 ${escapeHtml(item.name)}" ${state.selected.has(item.id) ? 'checked' : ''} ${state.deleting || ACTIVE.has(item.status) ? 'disabled' : ''} />` : ''}
           <button type="button" class="history-item ${escapeHtml(item.status)} ${state.workspace?.id === item.id ? 'active' : ''}" data-workspace-id="${item.id}">
             <span class="history-dot"></span>
             <span class="history-copy"><b>${escapeHtml(item.name)}</b><small>${item.access_role === 'collaborator' ? `协作 · @${escapeHtml(item.owner_username || 'unknown')} · ` : ''}${STATUS_LABELS[item.status] || item.status} · ${fmtTime(item.updated_at)}</small></span>
-          </button>`).join('');
+          </button>
+          ${item.access_role !== 'collaborator' ? `<button type="button" class="history-delete danger" data-delete-workspace="${item.id}" title="${ACTIVE.has(item.status) ? '任务执行中，暂不能删除' : '彻底删除工作区'}" aria-label="删除 ${escapeHtml(item.name)}" ${state.deleting || ACTIVE.has(item.status) ? 'disabled' : ''}><i data-lucide="trash-2"></i></button>` : ''}
+          </div>`).join('');
+        window.lucide?.createIcons();
     }
 
     async function loadSummaries() {
         const response = await API.paperWorkspaces();
         state.summaries = response.workspaces || [];
+        if (state.workspace && !state.summaries.some(item => item.id === state.workspace.id)) {
+            state.workspace = null;
+            renderWorkspace();
+            history.replaceState(null, '', '/paper_workspace.html');
+        }
         renderHistory();
         return state.summaries;
     }
 
     async function loadWorkspace(id) {
         if (!id) return;
+        const version = ++state.loadVersion;
         const response = await API.paperWorkspace(id);
+        if (version !== state.loadVersion) return;
         state.workspace = response.workspace;
         state.detailsStale = false;
         renderWorkspace();
@@ -174,9 +198,14 @@
 
     async function loadWorkspaceStatus(id) {
         if (!state.workspace || state.workspace.id !== id) return;
+        const version = state.loadVersion;
         const response = await API.paperWorkspaceStatus(id);
+        if (version !== state.loadVersion || state.workspace?.id !== id) return;
         const before = state.workspace;
         state.workspace = { ...before, ...response.workspace };
+        const events = new Map((before.events || []).map(event => [event.id, event]));
+        for (const event of response.workspace.events || []) events.set(event.id, { ...events.get(event.id), ...event });
+        state.workspace.events = [...events.values()].sort((a,b) => a.id-b.id);
         state.detailsStale ||= before.updated_at !== response.workspace.updated_at
             || before.stage !== response.workspace.stage
             || before.status !== response.workspace.status;
@@ -197,68 +226,19 @@
         state.summaryTimer = setTimeout(() => loadSummaries().catch(() => {}), 150);
     }
 
-    function phaseState(workspace, phase) {
-        if (phase === 'retain') return workspace.resources_reclaimed ? 'reclaimed' : 'retained';
-        if (['code', 'execute', 'analysis'].includes(phase) && workspace.mode === 'resources') return 'skipped';
-        const order = ['intake', 'config', 'schedule', 'code', 'execute', 'analysis', 'report', 'completed'];
-        const current = order.indexOf(workspace.stage);
-        const target = order.indexOf(phase);
-        if (workspace.status === 'failed' && workspace.stage === phase) return 'failed';
-        if (workspace.status === 'interrupted' && workspace.stage === phase) return 'failed';
-        if (workspace.status === 'completed' || current > target) return 'completed';
-        if (workspace.stage === phase && ACTIVE.has(workspace.status)) return 'active';
-        return 'pending';
-    }
-
-    function workflowPositions() {
-        const width = $('#workflowGraph').clientWidth;
-        if (width < 520) {
-            const ids = ['intake', 'config', 'schedule', 'code', 'execute', 'analysis', 'report', 'retain'];
-            return Object.fromEntries(ids.map((id, index) => [id, {
-                x: width * [.18, .5, .82][index % 3], y: 40 + Math.floor(index / 3) * 105,
-            }]));
-        }
-        const ids = ['intake', 'config', 'schedule', 'code', 'execute', 'analysis', 'report', 'retain'];
-        const gap = (width - 96) / (ids.length - 1);
-        return Object.fromEntries(ids.map((id, index) => [id, { x: 48 + gap * index, y: 88 }]));
-    }
-
     function renderWorkflow(workspace) {
-        if (!window.cytoscape) return;
-        const positions = workflowPositions();
-        const labels = {
-            intake: '文档理解', config: '配置 Agent', code: '代码生成', schedule: '资源调度',
-            execute: '真实执行', analysis: '分析 Agent', report: '报告 Agent', retain: '保留资源',
-        };
-        const nodes = Object.keys(labels).map(id => ({
-            data: { id, label: labels[id], state: phaseState(workspace, id) }, position: positions[id],
-        }));
-        const edgePairs = workspace.mode === 'resources'
-            ? [['intake', 'config'], ['config', 'schedule'], ['schedule', 'report'], ['report', 'retain']]
-            : [['intake', 'config'], ['config', 'schedule'], ['schedule', 'code'], ['code', 'execute'], ['execute', 'analysis'], ['analysis', 'report'], ['report', 'retain']];
-        if (state.cy && state.workflowMode === workspace.mode) {
-            state.cy.nodes().forEach(node => {
-                node.data('state', phaseState(workspace, node.id()));
-                node.position(positions[node.id()]);
-            });
-            return;
-        }
-        if (state.cy) state.cy.destroy();
-        state.workflowMode = workspace.mode;
-        state.cy = cytoscape({
-            container: $('#workflowGraph'), elements: [...nodes, ...edgePairs.map((pair, index) => ({ data: { id: `e${index}`, source: pair[0], target: pair[1] } }))],
-            layout: { name: 'preset', fit: false }, minZoom: 1, maxZoom: 1, userZoomingEnabled: false, userPanningEnabled: false,
-            style: [
-                { selector: 'node', style: { width: 82, height: 42, shape: 'round-rectangle', 'background-color': '#fafbfa', 'border-width': 1, 'border-color': '#dce4df', label: 'data(label)', color: '#657069', 'font-size': 10, 'font-family': 'sans-serif', 'text-valign': 'center', 'text-halign': 'center' } },
-                { selector: 'node[state="active"]', style: { 'background-color': '#eef9f3', 'border-width': 2, 'border-color': '#168557', color: '#0b633d' } },
-                { selector: 'node[state="completed"]', style: { 'background-color': '#e9f7ef', 'border-color': '#25a86b', color: '#0f754b' } },
-                { selector: 'node[state="retained"]', style: { 'background-color': '#fdf4e3', 'border-color': '#d08a16', color: '#9a6208' } },
-                { selector: 'node[state="reclaimed"]', style: { 'background-color': '#f0f3f1', 'border-color': '#9ba39e', color: '#747d77' } },
-                { selector: 'node[state="skipped"]', style: { 'background-color': '#fafbfa', 'border-style': 'dashed', color: '#9ba39e' } },
-                { selector: 'node[state="failed"]', style: { 'background-color': '#fdecec', 'border-color': '#dc2626', color: '#b91c1c' } },
-                { selector: 'edge', style: { width: 1.5, 'line-color': '#cad5ce', 'target-arrow-color': '#87948d', 'target-arrow-shape': 'triangle', 'curve-style': 'bezier' } },
-            ],
+        if (!window.WorkspaceFlow) return;
+        state.flow ||= WorkspaceFlow.create($('#workflowGraph'), {
+            onArtifact(tab) {
+                if ($('#flowStudio').classList.contains('flow-focused')) $('#flowFocus').click();
+                state.tab = tab;
+                document.querySelectorAll('.inspector-tabs button').forEach(item => item.classList.toggle('active', item.dataset.tab === tab));
+                renderInspector();
+                $('.artifact-inspector').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+                if (state.detailsStale) loadWorkspace(state.workspace?.id).catch(error => alert(error.message));
+            },
         });
+        state.flow.update(workspace);
     }
 
     function renderArtifacts(workspace) {
@@ -276,14 +256,14 @@
 
     function derivedDurations(workspace) {
         const analysis = workspace.analysis_json || {};
-        if (analysis.stage_durations?.length) return analysis.stage_durations;
+        if (!(workspace.events || []).length && analysis.stage_durations?.length) return analysis.stage_durations;
         const groups = {};
         (workspace.events || []).forEach(event => {
-            if (!['config', 'code', 'schedule', 'execute', 'analysis', 'report'].includes(event.phase)) return;
+            if (!['intake', 'config', 'code', 'schedule', 'execute', 'analysis', 'report'].includes(event.phase)) return;
             const values = groups[event.phase] || [event.created_at, event.created_at];
             groups[event.phase] = [Math.min(values[0], event.created_at), Math.max(values[1], event.created_at)];
         });
-        return Object.entries(groups).map(([phase, values]) => ({ phase, seconds: Math.max(1, values[1] - values[0] + 1) }));
+        return Object.entries(groups).map(([phase, values]) => ({ phase, seconds: Math.max(0, values[1] - values[0]) }));
     }
 
     function renderCharts(workspace) {
@@ -313,12 +293,17 @@
         state.resourceChart.setOption({
             animationDuration: 350, color: ['#187c73', '#527d47', '#b36b18'],
             tooltip: { trigger: 'item' }, legend: { bottom: 0, itemWidth: 8, itemHeight: 8, textStyle: { fontSize: 9 } },
-            series: [{ type: 'pie', radius: ['42%', '67%'], center: ['50%', '43%'], label: { fontSize: 9, formatter: '{b} {c}' }, data: counts }],
+            series: [{ type: 'pie', stillShowZeroSum: false, radius: ['42%', '67%'], center: ['50%', '43%'], label: { fontSize: 9, formatter: '{b} {c}' }, data: counts }],
         }, true);
     }
 
     function renderEvents(workspace) {
-        const events = workspace.events || [];
+        const query = $('#eventSearch').value.toLowerCase();
+        const filter = $('#eventFilter').value;
+        const events = (workspace.events || []).filter(event =>
+            (!query || event.content.toLowerCase().includes(query)) &&
+            (filter === 'all' || (filter === 'failure' ? /failed|interrupted|retry/.test(event.event_type) : /execution|prepared/.test(event.event_type)))
+        );
         $('#eventCount').textContent = `${events.length} 条`;
         $('#workspaceEvents').innerHTML = [...events].reverse().map(event => `
           <li class="${escapeHtml(event.event_type)}">
@@ -326,13 +311,19 @@
             <time class="event-time">${new Date(event.created_at * 1000).toLocaleTimeString('zh-CN', { hour12: false })}</time>
             <span class="event-phase">${PHASE_LABELS[event.phase] || escapeHtml(event.phase)}</span>
             <span class="event-content">${escapeHtml(event.content)}</span>
-          </li>`).join('') || '<li><span class="event-content">等待过程事件</span></li>';
+          </li>`).join('') || '<li class="event-empty"><span class="event-content">等待过程事件</span></li>';
     }
 
     function renderInspector() {
         const workspace = state.workspace;
         if (!workspace) return;
         const body = $('#inspectorBody');
+        $('#inspectorRaw').disabled = !['config','schedule','analysis'].includes(state.tab);
+        $('#downloadReport').hidden = state.tab !== 'report' || !workspace.report_md;
+        if (state.inspectorRaw && ['config','schedule','analysis'].includes(state.tab)) {
+            body.innerHTML = `<pre class="json-view">${escapeHtml(jsonText(workspace[state.tab + '_json']))}</pre>`;
+            return;
+        }
         $('#downloadReport').hidden = state.tab !== 'report' || !workspace.report_md;
         $('#downloadReport').href = `/api/paper/workspaces/${workspace.id}/report`;
         if (state.tab === 'report') {
@@ -368,33 +359,48 @@
             analysis: workspace.mode === 'resources' ? { skipped: true, reason: '本次执行至调度阶段' } : workspace.analysis_json,
         };
         const value = values[state.tab];
-        body.innerHTML = value && Object.keys(value).length
-            ? `<pre class="json-view">${escapeHtml(jsonText(value))}</pre>`
-            : `<div class="inspector-empty">${PHASE_LABELS[state.tab] || state.tab}产物尚未生成</div>`;
+        if (!value || !Object.keys(value).length) {
+            body.innerHTML = `<div class="inspector-empty">${PHASE_LABELS[state.tab] || state.tab}产物尚未生成</div>`;
+            return;
+        }
+        if (state.tab === 'config') {
+            const intelligence = value.document_intelligence || {};
+            body.innerHTML = `<div class="structured-inspector"><h3>资源计划</h3><div class="resource-plan">${(value.resources || []).map(row=>`<article><header><b>${TIER_LABELS[row.tier] || escapeHtml(row.tier || '')}</b><span>${escapeHtml(row.arch)} · ${row.count || 1} Units</span></header><code>${escapeHtml(row.image || '默认镜像')}</code><dl><div><dt>CPU</dt><dd>${escapeHtml(row.cpu || '—')}</dd></div><div><dt>内存</dt><dd>${escapeHtml(row.memory || '—')}</dd></div><div><dt>GPU</dt><dd>${Number(row.gpu || 0)}</dd></div></dl></article>`).join('')}</div>${intelligence.summary?`<h3>文档理解</h3><p>${escapeHtml(intelligence.summary)}</p>`:''}${(value.assumptions || []).length?'<h3>范围与假设</h3><ul>'+value.assumptions.map(text=>'<li>'+escapeHtml(text)+'</li>').join('')+'</ul>':''}</div>`;
+        } else if (state.tab === 'schedule') {
+            body.innerHTML = `<div class="structured-inspector"><h3>节点落位 <small>${value.created || 0} / ${value.requested || 0}</small></h3>${(value.placements || []).map(item=>`<article class="placement-row"><i data-lucide="server"></i><div><b>${escapeHtml(item.node || '等待节点')}</b><small>${escapeHtml(item.pod_name)}</small><span>${escapeHtml(item.arch || '')} · ${escapeHtml(item.node_type || '')}</span>${item.scheduling?.relaxed?.length?'<em>已记录节点类型回退</em>':''}</div></article>`).join('')}<p class="artifact-note">${workspace.resources_reclaimed?'计算资源已回收，记录保留。':'已创建资源保持运行，直到主动回收。'}</p></div>`;
+        } else {
+            const verdicts={passed:'验收通过',needs_attention:'结果需要关注',failed:'验收未通过'};
+            body.innerHTML = value.skipped ? '<div class="inspector-empty">本次仅执行至调度阶段</div>' : `<div class="structured-inspector"><div class="analysis-verdict ${escapeHtml(value.verdict || '')}"><i data-lucide="${value.verdict==='passed'?'circle-check':'triangle-alert'}"></i><b>${verdicts[value.verdict] || '等待结论'}</b></div><p>${escapeHtml(value.summary || '')}</p><h3>证据检查</h3>${(value.checks||[]).map(check=>`<div class="evidence-check ${check.passed?'passed':'failed'}"><i data-lucide="${check.passed?'check':'x'}"></i><div><b>${escapeHtml(check.name)}</b><p>${escapeHtml(check.detail || '')}</p></div></div>`).join('')}${(value.risks||[]).length?'<h3>风险与局限</h3><ul>'+value.risks.map(text=>'<li>'+escapeHtml(text)+'</li>').join('')+'</ul>':''}${(value.recommendations||[]).length?'<h3>下一步</h3><ul>'+value.recommendations.map(text=>'<li>'+escapeHtml(text)+'</li>').join('')+'</ul>':''}</div>`;
+        }
+        window.lucide?.createIcons();
     }
 
     function renderWorkspace(lightweight = false) {
         const workspace = state.workspace;
         $('#workspaceEmpty').hidden = !!workspace;
         $('#workspaceView').hidden = !workspace;
-        if (!workspace) return;
+        if (!workspace) { state.flow?.clear(); return; }
         const task = latestTask(workspace);
         const progress = task?.progress ?? PHASE_PROGRESS[workspace.stage] ?? 0;
         $('#workspaceMode').textContent = workspace.mode === 'full' ? '完整流程' : '执行至调度';
         $('#workspaceStatus').textContent = STATUS_LABELS[workspace.status] || workspace.status;
+        $('#workspaceStatus').dataset.status = workspace.status;
+        $('.run-strip').dataset.status = workspace.status;
         $('#workspaceName').textContent = workspace.name;
         $('#workspaceGoal').textContent = workspace.goal;
         $('#workspaceUpdated').textContent = `更新于 ${fmtTime(workspace.updated_at)}`;
         $('#runProgressBar').style.width = `${progress}%`;
-        $('#runProgressText').textContent = task?.detail || (workspace.resources_reclaimed ? '资源已回收，实验归档仍保留' : '实验产物已持久化');
+        $('#runProgressText').textContent = task?.detail || (workspace.resources_reclaimed ? '资源已回收，实验归档仍保留' : ['failed','interrupted'].includes(workspace.status) ? '流程已停止，已有产物与资源已保留' : ACTIVE.has(workspace.status) ? '正在执行实验流程' : '实验产物已持久化');
         $('#openExperiment').href = `/experiment_detail.html?id=${workspace.experiment_id}`;
         const canManageSharing = ['owner', 'admin'].includes(workspace.access_role || 'owner');
-        const canOperate = (workspace.access_role || 'owner') === 'owner';
+        const canOperate = workspace.user_id === ME?.id || (workspace.access_role || 'owner') === 'owner';
         $('#manageSharing').hidden = !canManageSharing;
         $('#manageSharing').href = `/experiment_detail.html?id=${workspace.experiment_id}#sharing`;
         $('#retryAnalysis').hidden = !canOperate || workspace.mode !== 'full' || ACTIVE.has(workspace.status);
         $('#reclaimResources').hidden = !canOperate || ACTIVE.has(workspace.status) || workspace.resources_reclaimed || !(workspace.schedule_json?.created > 0);
-        $('#deleteWorkspace').hidden = !canOperate || ACTIVE.has(workspace.status);
+        $('#deleteWorkspace').hidden = !canManageSharing;
+        $('#deleteWorkspace').disabled = state.deleting || ACTIVE.has(workspace.status);
+        $('#deleteWorkspace').title = ACTIVE.has(workspace.status) ? '任务执行中，暂不能删除' : '彻底删除工作区及文件';
         renderWorkflow(workspace);
         renderArtifacts(workspace);
         renderCharts(workspace);
@@ -403,17 +409,7 @@
     }
 
     async function previewFile(fileId) {
-        $('#previewFilename').textContent = '加载中';
-        $('#filePreview').textContent = '';
-        $('#filePreviewBackdrop').hidden = false;
-        try {
-            const response = await API.paperFileContent(state.workspace.id, fileId);
-            $('#previewFilename').textContent = response.filename;
-            $('#filePreview').textContent = response.content;
-        } catch (error) {
-            $('#previewFilename').textContent = '无法预览';
-            $('#filePreview').textContent = error.message;
-        }
+        if (state.workspace) await FilePreview.open(state.workspace.id, fileId);
     }
 
     async function retryAnalysis() {
@@ -447,21 +443,33 @@
     }
 
     async function deleteWorkspace() {
-        if (!state.workspace || !confirm('确认彻底删除此工作区？所有 Units、上传文件、Agent 生成代码、报告和过程记录都会被删除，且无法恢复。')) return;
-        const button = $('#deleteWorkspace');
-        button.disabled = true;
+        if (state.workspace) await deleteWorkspaces([state.workspace.id]);
+    }
+
+    async function deleteWorkspaces(ids) {
+        if (state.deleting || !ids.length || !confirm(`确认彻底删除选中的 ${ids.length} 个工作区？所有容器、关联实验、上传文件、生成代码、报告和过程记录都会被删除，且无法恢复。`)) return;
+        state.deleting = true; renderHistory(); renderWorkspace();
         try {
-            await API.deletePaperWorkspace(state.workspace.id);
-            state.workspace = null;
+            const result = await API.deletePaperWorkspaces(ids);
+            for (const item of result.results) {
+                if (!item.ok) continue;
+                state.selected.delete(item.id);
+                if (state.workspace?.id === item.id) { state.workspace = null; state.loadVersion++; }
+            }
             renderWorkspace();
             await loadSummaries();
-            const next = state.summaries[0];
-            if (next) await loadWorkspace(next.id);
-            else history.replaceState(null, '', '/paper_workspace.html');
+            if (!state.workspace) {
+                const next = state.summaries[0];
+                if (next) await loadWorkspace(next.id);
+                else history.replaceState(null, '', '/paper_workspace.html');
+            }
+            await refreshShellExperiment();
+            const failures = result.results.filter(item => !item.ok);
+            if (failures.length) alert('以下工作未删除：\n' + failures.map(item => `${item.id}: ${item.error}`).join('\n'));
         } catch (error) {
             alert(`删除工作区失败：${error.message}`);
         } finally {
-            button.disabled = false;
+            state.deleting = false; renderHistory(); renderWorkspace();
         }
     }
 
@@ -488,9 +496,34 @@
         state.files.splice(Number(button.dataset.removeFile), 1); renderSelectedFiles();
     };
     $('#workspaceHistory').onclick = event => {
+        const remove = event.target.closest('[data-delete-workspace]');
+        if (remove) { deleteWorkspaces([remove.dataset.deleteWorkspace]); return; }
         const button = event.target.closest('[data-workspace-id]');
         if (button) loadWorkspace(button.dataset.workspaceId).catch(error => alert(error.message));
     };
+    $('#workspaceHistory').onchange = event => {
+        const id = event.target.dataset.selectWorkspace;
+        if (!id) return;
+        event.target.checked ? state.selected.add(id) : state.selected.delete(id);
+        renderHistory();
+    };
+    $('#workspaceSearch').oninput = event => { state.search = event.target.value.trim().toLowerCase(); renderHistory(); };
+    $('#eventFilter').onchange = () => { if(state.workspace) renderEvents(state.workspace); };
+    $('#eventSearch').oninput = () => { if(state.workspace) renderEvents(state.workspace); };
+    $('#workspacePanelTabs').onclick = event => {
+        const button = event.target.closest('[data-panel]');
+        if (!button) return;
+        document.querySelectorAll('[data-workspace-panel]').forEach(panel => { panel.hidden = panel.dataset.workspacePanel !== button.dataset.panel; });
+        document.querySelectorAll('#workspacePanelTabs button').forEach(item => item.setAttribute('aria-selected',String(item === button)));
+        if (button.dataset.panel === 'telemetry') { state.durationChart?.resize(); state.resourceChart?.resize(); }
+    };
+    $('#inspectorRaw').onclick = () => { state.inspectorRaw = !state.inspectorRaw; $('#inspectorRaw').setAttribute('aria-pressed',String(state.inspectorRaw)); renderInspector(); };
+    $('#selectWorkspaces').onchange = event => {
+        state.selected.clear();
+        if (event.target.checked) state.summaries.filter(item => item.access_role !== 'collaborator' && !ACTIVE.has(item.status) && item.name.toLowerCase().includes(state.search)).forEach(item => state.selected.add(item.id));
+        renderHistory();
+    };
+    $('#deleteSelectedWorkspaces').onclick = () => deleteWorkspaces([...state.selected]);
     $('#artifactList').onclick = event => {
         const button = event.target.closest('[data-preview-file]');
         if (button) previewFile(Number(button.dataset.previewFile));
@@ -508,11 +541,10 @@
     $('#retryAnalysis').onclick = retryAnalysis;
     $('#reclaimResources').onclick = reclaimResources;
     $('#deleteWorkspace').onclick = deleteWorkspace;
-    $('#closePreview').onclick = () => { $('#filePreviewBackdrop').hidden = true; };
-    $('#filePreviewBackdrop').onclick = event => { if (event.target === event.currentTarget) event.currentTarget.hidden = true; };
     window.addEventListener('task:update', event => {
         const workspaceId = event.detail?.metadata?.workspace_id;
         if (workspaceId) { scheduleReload(workspaceId); scheduleSummaryReload(); }
+        if (event.detail?.kind === 'chat' && ['succeeded', 'failed'].includes(event.detail.status)) scheduleSummaryReload();
     });
     window.addEventListener('task-socket:state', event => {
         $('#liveIndicator').classList.toggle('offline', !event.detail?.connected);
@@ -522,6 +554,13 @@
         state.durationChart?.resize(); state.resourceChart?.resize();
         if (state.workspace) renderWorkflow(state.workspace);
     });
+    setInterval(async () => {
+        if (document.hidden || !state.workspace || !ACTIVE.has(state.workspace.status) || state.loadingStatus) return;
+        state.loadingStatus = true;
+        try { await loadWorkspaceStatus(state.workspace.id); }
+        catch (_) { /* Retain the last observed state until connectivity returns. */ }
+        finally { state.loadingStatus = false; }
+    }, 5000);
 
     (async () => {
         ME = await loadMe();

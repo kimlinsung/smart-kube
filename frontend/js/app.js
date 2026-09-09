@@ -105,7 +105,7 @@ function renderShell(me) {
     const sidebar = document.getElementById('sidebar');
     if (sidebar) {
         const navItems = NAV.filter(n => !n.admin || isAdmin).map(n => `
-            <a href="${n.href}" class="nav-item ${n.key === meta.nav ? 'active' : ''}">
+            <a href="${n.href}" class="nav-item ${n.key === meta.nav ? 'active' : ''}" title="${escapeHtml(n.label)}" aria-label="${escapeHtml(n.label)}">
                 ${icon(n.ico, 'ico')}<span>${n.label}</span>
             </a>`).join('');
         const expChip = me.current_experiment_name ? `
@@ -126,7 +126,7 @@ function renderShell(me) {
             <div class="sidebar-spacer"></div>
             <div class="sidebar-foot">
                 ${expChip}
-                <button class="user-btn" id="userBtn">
+                <button class="user-btn" id="userBtn" title="账户菜单" aria-label="账户菜单">
                     <span class="avatar">${avatarInner(me)}</span>
                     <span class="u-meta">
                         <span class="u-name">${escapeHtml(me.name || me.username)}</span>
